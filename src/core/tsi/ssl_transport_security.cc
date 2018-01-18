@@ -56,6 +56,9 @@ extern "C" {
 #define TSI_SSL_MAX_PROTECTED_FRAME_SIZE_UPPER_BOUND 16384
 #define TSI_SSL_MAX_PROTECTED_FRAME_SIZE_LOWER_BOUND 1024
 
+#define TSI_BUFFER_READ_SIZE  8192
+#define TSI_BUFFER_WRITE_SIZE 8192
+
 /* Putting a macro like this and littering the source file with #if is really
    bad practice.
    TODO(jboeuf): refactor all the #if / #endif in a separate module. */
@@ -1104,13 +1107,11 @@ static tsi_result create_tsi_ssl_handshaker(SSL_CTX* ctx, int is_client,
   }
   SSL_set_info_callback(ssl, ssl_info_callback);
 
-  into_ssl = BIO_new(BIO_s_mem());
-  from_ssl = BIO_new(BIO_s_mem());
-  if (into_ssl == nullptr || from_ssl == nullptr) {
-    gpr_log(GPR_ERROR, "BIO_new failed.");
+  if (!BIO_new_bio_pair(&into_ssl, TSI_BUFFER_READ_SIZE, &from_ssl, TSI_BUFFER_WRITE_SIZE)) {
+    gpr_log(GPR_ERROR, "BIO_new_bio_pair failed.");
     SSL_free(ssl);
     if (into_ssl != nullptr) BIO_free(into_ssl);
-    if (from_ssl != nullptr) BIO_free(into_ssl);
+    if (from_ssl != nullptr) BIO_free(from_ssl);
     return TSI_OUT_OF_RESOURCES;
   }
   SSL_set_bio(ssl, into_ssl, from_ssl);
