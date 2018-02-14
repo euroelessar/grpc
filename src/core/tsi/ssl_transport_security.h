@@ -20,6 +20,7 @@
 #define GRPC_CORE_TSI_SSL_TRANSPORT_SECURITY_H
 
 #include "src/core/tsi/transport_security_interface.h"
+#include <grpc/grpc_security.h>
 
 /* Value for the TSI_CERTIFICATE_TYPE_PEER_PROPERTY property for X509 certs. */
 #define TSI_X509_CERTIFICATE_TYPE "X509"
@@ -77,6 +78,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
     const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
+    grpc_ssl_session_cache* ssl_session_cache,
     tsi_ssl_client_handshaker_factory** factory);
 
 /* Creates a client handshaker.

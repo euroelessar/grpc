@@ -116,6 +116,7 @@ static gpr_mu* openssl_mutexes = nullptr;
 static void openssl_locking_cb(int mode, int type, const char* file,
                                int line) GRPC_UNUSED;
 static unsigned long openssl_thread_id_cb(void) GRPC_UNUSED;
+static int ssl_session_cache_id = -1;
 
 static void openssl_locking_cb(int mode, int type, const char* file, int line) {
   if (mode & CRYPTO_LOCK) {
@@ -144,6 +145,7 @@ static void init_openssl(void) {
   }
   CRYPTO_set_locking_callback(openssl_locking_cb);
   CRYPTO_set_id_callback(openssl_thread_id_cb);
+  ssl_session_cache_id = SSL_CTX_get_ex_new_index(0, nullptr, nullptr, nullptr, nullptr);
 }
 
 /* --- Ssl utils. ---*/
@@ -1140,6 +1142,7 @@ static tsi_result create_tsi_ssl_handshaker(SSL_CTX* ctx, int is_client,
         return TSI_INTERNAL_ERROR;
       }
     }
+    tsi_ssl_maybe_resume_session(ssl);
     ssl_result = SSL_do_handshake(ssl);
     ssl_result = SSL_get_error(ssl, ssl_result);
     if (ssl_result != SSL_ERROR_WANT_READ) {
@@ -1363,10 +1366,49 @@ static int server_handshaker_factory_npn_advertised_callback(
 static tsi_ssl_handshaker_factory_vtable client_handshaker_factory_vtable = {
     tsi_ssl_client_handshaker_factory_destroy};
 
+static grpc_ssl_session_cache* tsi_ssl_get_session_cache(SSL *ssl) {
+    SSL_CTX* session_context = SSL_get_SSL_CTX(ssl);
+    if (session_context == nullptr) {
+        return nullptr;
+    }
+
+    return (grpc_ssl_session_cache*)SSL_CTX_get_ex_data(ssl_context,
+                                                        ssl_session_cache_id);
+}
+
+static int tsi_ssl_session_set_new_callback(SSL* ssl, SSL_SESSION* session) {
+    grpc_ssl_session_cache* ssl_session_cache = tsi_ssl_get_session_cache(ssl);
+    if (ssl_session_cache == nullptr) {
+        return;
+    }
+
+    const char *server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+    if (server_name == nullptr) {
+        return;
+    }
+
+    ssl_session_cache->put(server_name, session);
+}
+
+static void tsi_ssl_maybe_resume_session(SSL* ssl) {
+    grpc_ssl_session_cache* ssl_session_cache = tsi_ssl_get_session_cache(ssl);
+    if (ssl_session_cache == nullptr) {
+        return;
+    }
+
+    const char *server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+    if (server_name == nullptr) {
+        return;
+    }
+
+    SSL_SESSION* session = ssl_session_cache->get(server_name);
+}
+
 tsi_result tsi_create_ssl_client_handshaker_factory(
     const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
+    grpc_ssl_session_cache* ssl_session_cache,
     tsi_ssl_client_handshaker_factory** factory) {
   SSL_CTX* ssl_context = nullptr;
   tsi_ssl_client_handshaker_factory* impl = nullptr;
@@ -1382,6 +1424,11 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
   if (ssl_context == nullptr) {
     gpr_log(GPR_ERROR, "Could not create ssl context.");
     return TSI_INVALID_ARGUMENT;
+  }
+
+  if (ssl_session_cache != nullptr) {
+    SSL_CTX_set_ex_data(ssl_context, ssl_session_cache_id, ssl_session_cache);
+    SSL_CTX_sess_set_new_cb(ssl_context, tsi_ssl_session_set_new_callback);
   }
 
   impl = static_cast<tsi_ssl_client_handshaker_factory*>(

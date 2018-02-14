@@ -972,7 +972,8 @@ grpc_security_status grpc_ssl_channel_security_connector_create(
     grpc_channel_credentials* channel_creds,
     grpc_call_credentials* request_metadata_creds,
     const grpc_ssl_config* config, const char* target_name,
-    const char* overridden_target_name, grpc_channel_security_connector** sc) {
+    const char* overridden_target_name, grpc_ssl_session_cache* ssl_session_cache,
+    grpc_channel_security_connector** sc) {
   size_t num_alpn_protocols = 0;
   const char** alpn_protocol_strings =
       fill_alpn_protocol_strings(&num_alpn_protocols);
@@ -1020,7 +1021,7 @@ grpc_security_status grpc_ssl_channel_security_connector_create(
   result = tsi_create_ssl_client_handshaker_factory(
       has_key_cert_pair ? config->pem_key_cert_pair : nullptr, pem_root_certs,
       ssl_cipher_suites(), alpn_protocol_strings,
-      static_cast<uint16_t>(num_alpn_protocols), &c->client_handshaker_factory);
+      static_cast<uint16_t>(num_alpn_protocols), ssl_session_cache, &c->client_handshaker_factory);
   if (result != TSI_OK) {
     gpr_log(GPR_ERROR, "Handshaker factory creation failed with %s.",
             tsi_result_to_string(result));
