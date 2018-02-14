@@ -1128,6 +1128,7 @@ static tsi_result create_tsi_ssl_handshaker(SSL_CTX* ctx, int is_client,
   }
   SSL_set_bio(ssl, ssl_io, ssl_io);
   if (is_client) {
+    gpr_log(GPR_ERROR, "create_tsi_ssl_handshaker, ctx: %p, sni: %s", ctx, server_name_indication);
     int ssl_result;
     SSL_set_connect_state(ssl);
     if (server_name_indication != nullptr) {
