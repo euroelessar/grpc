@@ -1372,8 +1372,8 @@ static grpc_ssl_session_cache* tsi_ssl_get_session_cache(SSL *ssl) {
         return nullptr;
     }
 
-    return (grpc_ssl_session_cache*)SSL_CTX_get_ex_data(ssl_context,
-                                                        ssl_session_cache_id);
+    return static_cast<grpc_ssl_session_cache*>(
+        SSL_CTX_get_ex_data(ssl_context, ssl_session_cache_id));
 }
 
 static int tsi_ssl_session_set_new_callback(SSL* ssl, SSL_SESSION* session) {

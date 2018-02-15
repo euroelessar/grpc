@@ -64,11 +64,11 @@ static grpc_security_status ssl_create_security_connector(
     }
     if (strcmp(arg->key, GRPC_SSL_SESSION_CACHE_ARG) == 0 &&
         arg->type == GRPC_ARG_POINTER) {
-        ssl_session_cache = (grpc_ssl_session_cache*)arg->value.pointer
+        ssl_session_cache = static_cast<grpc_ssl_session_cache*>(arg->value.pointer.p);
     }
   }
   status = grpc_ssl_channel_security_connector_create(
-      creds, call_creds, &c->config, target, overridden_target_name, sc, ssl_session_cache, sc);
+      creds, call_creds, &c->config, target, overridden_target_name, ssl_session_cache, sc);
   if (status != GRPC_SECURITY_OK) {
     return status;
   }
