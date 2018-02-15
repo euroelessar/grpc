@@ -20,7 +20,8 @@
 #define GRPC_CORE_TSI_SSL_TRANSPORT_SECURITY_H
 
 #include "src/core/tsi/transport_security_interface.h"
-#include <grpc/grpc_security.h>
+#include "src/core/lib/gprpp/ref_counted.h"
+#include "src/core/lib/gprpp/ref_counted_ptr.h"
 
 /* Value for the TSI_CERTIFICATE_TYPE_PEER_PROPERTY property for X509 certs. */
 #define TSI_X509_CERTIFICATE_TYPE "X509"
@@ -33,6 +34,75 @@
 #define TSI_X509_PEM_CERT_PROPERTY "x509_pem_cert"
 
 #define TSI_SSL_ALPN_SELECTED_PROTOCOL "ssl_alpn_selected_protocol"
+
+/* --- tsi_ssl_session_cache object --- */
+
+// Forward declaration for BoringSSL SSL_SESSION.
+struct ssl_session_st;
+
+namespace grpc_core {
+namespace tsi {
+
+class SslSessionCache;
+class SslSessionImpl;
+
+class SslSession: public RefCounted<SslSession> {
+public:
+  explicit SslSession(ssl_session_st* session);
+
+private:
+  virtual ~SslSession();
+
+  ssl_session_st* session_;
+};
+
+class SslSessionCache: public RefCounted<SslSessionCache> {
+public:
+  virtual void Put(const char* key, const RefCountedPtr<SslSession>& session) GRPC_ABSTRACT;
+  virtual RefCountedPtr<SslSession> Get(const char* key) GRPC_ABSTRACT;
+
+  GRPC_ABSTRACT_BASE_CLASS
+};
+
+class SslSessionLRUCache: public SslSessionCache {
+public:
+  SslSessionLRUCache(size_t size);
+
+  void Put(const char* key, const RefCountedPtr<SslSession>& session) override;
+  RefCountedPtr<SslSession> Get(const char* key) override;
+
+private:
+};
+
+}
+}
+
+//typedef struct tsi_ssl_session tsi_ssl_session;
+//typedef struct tsi_ssl_session_cache tsi_ssl_session_cache;
+
+//typedef struct {
+//  void (*put) (tsi_ssl_session_cache* self, const char* key, tsi_ssl_session* session);
+//  tsi_ssl_session* (*get) (tsi_ssl_session_cache* self, const char* key);
+
+//  void (*destroy) (tsi_ssl_session_cache* self);
+//} tsi_ssl_session_cache_vtable;
+
+//struct tsi_ssl_session_cache {
+//  gpr_refcount ref;
+//  tsi_ssl_session_cache_vtable* vtable;
+//};
+
+//void tsi_ssl_session_cache_ref(tsi_ssl_session_cache* self);
+//void tsi_ssl_session_cache_unref(tsi_ssl_session_cache* self);
+
+//void tsi_ssl_session_cache_put(
+//    tsi_ssl_session_cache* self, const char* key, tsi_ssl_session* session);
+//tsi_ssl_session* tsi_ssl_session_cache_get(
+//    tsi_ssl_session_cache* self, const char* key);
+
+//typedef struct tsi_ssl_session_cache_lru tsi_ssl_session_cache_lru;
+
+//tsi_ssl_session_cache* new_tsi_ssl_ssion_cache_lru(size_t size);
 
 /* --- tsi_ssl_client_handshaker_factory object ---
 
@@ -78,7 +148,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
     const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
-    grpc_ssl_session_cache* ssl_session_cache,
+    tsi_ssl_session_cache* ssl_session_cache,
     tsi_ssl_client_handshaker_factory** factory);
 
 /* Creates a client handshaker.

@@ -1361,10 +1361,59 @@ static int server_handshaker_factory_npn_advertised_callback(
   return SSL_TLSEXT_ERR_OK;
 }
 
-/* --- tsi_ssl_handshaker_factory constructors. --- */
+/* --- tsi ssl session tickets support. --- */
 
-static tsi_ssl_handshaker_factory_vtable client_handshaker_factory_vtable = {
-    tsi_ssl_client_handshaker_factory_destroy};
+namespace grpc_core {
+namespace tsi {
+
+SslSession::SslSession(SSL_SESSION* session) : session_(session) {
+  SSL_SESSION_up_ref(session_);
+}
+
+SslSession::~SslSession() {
+  SSL_SESSION_free(session_);
+}
+
+} // namespace tsi
+} // namespace grpc_core
+
+//struct tsi_ssl_session {
+//  SSL_SESSION* session;
+//};
+
+//void tsi_ssl_session_cache_ref(tsi_ssl_session_cache* self) {
+//  gpr_ref(&self->ref);
+//}
+
+//void tsi_ssl_session_cache_unref(tsi_ssl_session_cache* self) {
+//  if (gpr_unref(&self->ref)) {
+//    self->vtable->destroy(self);
+//  }
+//}
+
+//void tsi_ssl_session_cache_put(
+//    tsi_ssl_session_cache* self, const char* key, tsi_ssl_session* session) {
+//  self->vtable->put(self, key, session);
+//}
+
+//tsi_ssl_session* tsi_ssl_session_cache_get(
+//    tsi_ssl_session_cache* self, const char* key) {
+//  return self->vtable->get(self, key);
+//}
+
+//struct tsi_ssl_session_cache_lru {
+//  // Must be first.
+//  tsi_ssl_session_cache* base;
+
+//  size_t size;
+//  tsi_ssl_session* sessions;
+//};
+
+//tsi_ssl_session_cache* new_tsi_ssl_ssion_cache_lru(size_t size) {
+//  tsi_ssl_session_cache_lru* cache = static_cast<tsi_ssl_session_cache_lru*>(
+//    gpr_zalloc(sizeof(tsi_ssl_session_cache_lru)));
+//  cache->size = size;
+//}
 
 static grpc_ssl_session_cache* tsi_ssl_get_session_cache(SSL *ssl) {
     SSL_CTX* session_context = SSL_get_SSL_CTX(ssl);
@@ -1404,11 +1453,16 @@ static void tsi_ssl_maybe_resume_session(SSL* ssl) {
     SSL_SESSION* session = ssl_session_cache->get(server_name);
 }
 
+/* --- tsi_ssl_handshaker_factory constructors. --- */
+
+static tsi_ssl_handshaker_factory_vtable client_handshaker_factory_vtable = {
+    tsi_ssl_client_handshaker_factory_destroy};
+
 tsi_result tsi_create_ssl_client_handshaker_factory(
     const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
-    grpc_ssl_session_cache* ssl_session_cache,
+    tsi_ssl_session_cache* ssl_session_cache,
     tsi_ssl_client_handshaker_factory** factory) {
   SSL_CTX* ssl_context = nullptr;
   tsi_ssl_client_handshaker_factory* impl = nullptr;
