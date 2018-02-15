@@ -23,6 +23,8 @@
 #include "src/core/lib/gprpp/ref_counted.h"
 #include "src/core/lib/gprpp/ref_counted_ptr.h"
 
+#include <list>
+
 /* Value for the TSI_CERTIFICATE_TYPE_PEER_PROPERTY property for X509 certs. */
 #define TSI_X509_CERTIFICATE_TYPE "X509"
 
@@ -62,47 +64,33 @@ public:
   virtual RefCountedPtr<SslSession> Get(const char* key) GRPC_ABSTRACT;
 
   GRPC_ABSTRACT_BASE_CLASS
+
+protected:
+    SslSessionCache();
 };
 
 class SslSessionLRUCache: public SslSessionCache {
 public:
-  SslSessionLRUCache(size_t size);
+  SslSessionLRUCache(size_t capacity);
 
   void Put(const char* key, const RefCountedPtr<SslSession>& session) override;
   RefCountedPtr<SslSession> Get(const char* key) override;
 
 private:
+  virtual ~SslSessionLRUCache();
+
+  EntryList::iterator FindLocked(const char *key);
+
+  class Entry;
+  typedef std::list<Entry, Allocator> EntryList;
+
+  gpr_mu lock_;
+  size_t capacity_;
+  EntryList entries_;
 };
 
 }
 }
-
-//typedef struct tsi_ssl_session tsi_ssl_session;
-//typedef struct tsi_ssl_session_cache tsi_ssl_session_cache;
-
-//typedef struct {
-//  void (*put) (tsi_ssl_session_cache* self, const char* key, tsi_ssl_session* session);
-//  tsi_ssl_session* (*get) (tsi_ssl_session_cache* self, const char* key);
-
-//  void (*destroy) (tsi_ssl_session_cache* self);
-//} tsi_ssl_session_cache_vtable;
-
-//struct tsi_ssl_session_cache {
-//  gpr_refcount ref;
-//  tsi_ssl_session_cache_vtable* vtable;
-//};
-
-//void tsi_ssl_session_cache_ref(tsi_ssl_session_cache* self);
-//void tsi_ssl_session_cache_unref(tsi_ssl_session_cache* self);
-
-//void tsi_ssl_session_cache_put(
-//    tsi_ssl_session_cache* self, const char* key, tsi_ssl_session* session);
-//tsi_ssl_session* tsi_ssl_session_cache_get(
-//    tsi_ssl_session_cache* self, const char* key);
-
-//typedef struct tsi_ssl_session_cache_lru tsi_ssl_session_cache_lru;
-
-//tsi_ssl_session_cache* new_tsi_ssl_ssion_cache_lru(size_t size);
 
 /* --- tsi_ssl_client_handshaker_factory object ---
 
