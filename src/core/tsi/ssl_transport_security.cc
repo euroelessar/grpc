@@ -1519,7 +1519,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
     const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
-    tsi_ssl_session_cache* ssl_session_cache,
+    const grpc_core::RefCountedPtr<SslSessionCache>& ssl_session_cache,
     tsi_ssl_client_handshaker_factory** factory) {
   SSL_CTX* ssl_context = nullptr;
   tsi_ssl_client_handshaker_factory* impl = nullptr;
@@ -1537,7 +1537,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
     return TSI_INVALID_ARGUMENT;
   }
 
-  if (ssl_session_cache != nullptr) {
+  if (ssl_session_cache) {
     SSL_CTX_set_ex_data(ssl_context, ssl_session_cache_id, ssl_session_cache);
     SSL_CTX_sess_set_new_cb(ssl_context, tsi_ssl_session_set_new_callback);
   }
