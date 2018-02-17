@@ -43,6 +43,7 @@ static void maybe_embiggen(grpc_slice_buffer* sb) {
     } else {
       /* Allocate more memory if no more space is available */
       sb->capacity = GROW(sb->capacity);
+      gpr_log(GPR_INFO, "capacity: %zu, count: %zu", sb->capacity, slice_count);
       GPR_ASSERT(sb->capacity > slice_count);
       if (sb->base_slices == sb->inlined) {
         sb->base_slices = static_cast<grpc_slice*>(
