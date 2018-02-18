@@ -89,10 +89,10 @@ void grpc_alts_credentials_options_destroy(
     grpc_alts_credentials_options* options);
 
 /* This method creates a grpc ALTS credentials client options instance. */
-grpc_alts_credentials_options* grpc_alts_credentials_client_options_create();
+extern "C" grpc_alts_credentials_options* grpc_alts_credentials_client_options_create();
 
 /* This method creates a grpc ALTS credentials server options instance. */
-grpc_alts_credentials_options* grpc_alts_credentials_server_options_create();
+extern "C" grpc_alts_credentials_options* grpc_alts_credentials_server_options_create();
 
 /**
  * This method adds a target service account to grpc ALTS credentials client

@@ -68,7 +68,7 @@ static grpc_server_credentials_vtable alts_server_credentials_vtable = {
 
 grpc_channel_credentials* grpc_alts_credentials_create_customized(
     const grpc_alts_credentials_options* options,
-    const char* handshaker_service_url, bool enable_untrusted_alts) {
+    const char* handshaker_service_url, char enable_untrusted_alts) {
   if (!enable_untrusted_alts && !is_running_on_gcp()) {
     return nullptr;
   }
@@ -87,7 +87,7 @@ grpc_channel_credentials* grpc_alts_credentials_create_customized(
 
 grpc_server_credentials* grpc_alts_server_credentials_create_customized(
     const grpc_alts_credentials_options* options,
-    const char* handshaker_service_url, bool enable_untrusted_alts) {
+    const char* handshaker_service_url, char enable_untrusted_alts) {
   if (!enable_untrusted_alts && !is_running_on_gcp()) {
     return nullptr;
   }

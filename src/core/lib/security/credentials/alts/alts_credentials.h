@@ -74,9 +74,9 @@ typedef struct grpc_alts_server_credentials {
  * Otherwise, it returns the created credential object.
  */
 
-grpc_channel_credentials* grpc_alts_credentials_create_customized(
+extern "C" grpc_channel_credentials* grpc_alts_credentials_create_customized(
     const grpc_alts_credentials_options* options,
-    const char* handshaker_service_url, bool enable_untrusted_alts);
+    const char* handshaker_service_url, char enable_untrusted_alts);
 
 /**
  * This method creates an ALTS server credential object with customized
@@ -93,9 +93,9 @@ grpc_channel_credentials* grpc_alts_credentials_create_customized(
  * It returns nullptr if the flag is disabled and ALTS is not running on GCP.
  * Otherwise, it returns the created credential object.
  */
-grpc_server_credentials* grpc_alts_server_credentials_create_customized(
+extern "C" grpc_server_credentials* grpc_alts_server_credentials_create_customized(
     const grpc_alts_credentials_options* options,
-    const char* handshaker_service_url, bool enable_untrusted_alts);
+    const char* handshaker_service_url, char enable_untrusted_alts);
 
 /**
  * This method checks if the system is running on GCP.
