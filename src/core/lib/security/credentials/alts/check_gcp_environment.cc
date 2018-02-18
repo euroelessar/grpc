@@ -23,7 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef GPR_WINDOWS
+#if defined(_WIN64) || defined(WIN64) || defined(_WIN32) || defined(WIN32)
 #include <shellapi.h>
 #include <tchar.h>
 #include <windows.h>
@@ -91,7 +91,7 @@ bool check_bios_data(const char* bios_data_file, bool is_linux) {
   return result;
 }
 
-#ifdef GPR_WINDOWS
+#if defined(_WIN64) || defined(WIN64) || defined(_WIN32) || defined(WIN32)
 static bool run_powershell() {
   SECURITY_ATTRIBUTES sa;
   sa.nLength = sizeof(sa);
@@ -137,13 +137,15 @@ bool is_running_on_gcp() {
   }
   compute_engine_detection_done = 1;
   bool result = false;
-#ifdef GPR_LINUX
+#if defined(__linux__)
   result = check_bios_data(GRPC_ALTS_PRODUCT_NAME_FILE, true /* is_linux */);
-#endif
-#ifdef GPR_WINDOWS
+#elif defined(_WIN64) || defined(WIN64) || defined(_WIN32) || defined(WIN32)
   result =
       run_powershell() &&
       check_bios_data(GRPC_ALTS_WINDOWS_CHECK_BIOS_FILE, false /* is_linux */);
+#else
+  gpr_log(GPR_ERROR,
+          "Platforms other than Linux and Windows are not supported");
 #endif
   is_on_compute_engine = result;
   return result;
