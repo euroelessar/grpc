@@ -21,7 +21,7 @@
 
 #include <stdbool.h>
 
-#if !defined(GPR_WINDOWS)
+#ifndef GPR_WINDOWS
 #include <sys/uio.h>
 #endif
 
