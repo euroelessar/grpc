@@ -757,16 +757,23 @@ static int NullVerifyCallback(int preverify_ok, X509_STORE_CTX* ctx) {
 
 static int ssl_bio_reader_read(BIO* bio, char* data, int size) {
   BIO_clear_retry_flags(bio);
+  GPR_ASSERT(bio->ptr);
+  tsi_ssl_bio* impl = static_cast<tsi_ssl_bio*>(bio->ptr);
+
+//  gpr_log(GPR_INFO, "tsi_bio_read, bio: %p, size: %d (of %zu)", impl, size, impl->data.length);
 
   if (size <= 0) {
     return 0;
   }
 
-  tsi_ssl_bio* impl = static_cast<tsi_ssl_bio*>(bio->ptr);
-
   size_t actual_size = static_cast<size_t>(size);
   if (impl->data.length < actual_size) {
     actual_size = impl->data.length;
+  }
+
+  if (actual_size == 0) {
+    BIO_set_retry_read(bio); // buffer is empty
+    return -1;
   }
 
   grpc_slice_buffer_move_first_into_buffer(&impl->data, actual_size, data);
@@ -799,12 +806,15 @@ static const BIO_METHOD ssl_bio_reader_vtable = {
 
 static int ssl_bio_writer_write(BIO* bio, const char* data, int size) {
   BIO_clear_retry_flags(bio);
+  GPR_ASSERT(bio->ptr);
+  tsi_ssl_bio* impl = static_cast<tsi_ssl_bio*>(bio->ptr);
+
+//  gpr_log(GPR_INFO, "tsi_bio_write, bio: %p, size: %d", impl, size);
 
   if (size <= 0) {
     return 0;
   }
 
-  tsi_ssl_bio* impl = static_cast<tsi_ssl_bio*>(bio->ptr);
   grpc_slice slice = grpc_slice_from_copied_buffer(data, static_cast<size_t>(size));
   grpc_slice_buffer_add(&impl->data, slice);
   return size;
@@ -918,8 +928,8 @@ tsi_result ssl_zero_copy_protector_unprotect(
       return TSI_OK;
     }
 
-    grpc_slice actual_slice = grpc_slice_sub(slice, 0, unprotected_bytes_size);
-    gpr_log(GPR_INFO, "ssl_bio_writer_write, ssl_zero_copy_protector_unprotect: %zu", GRPC_SLICE_LENGTH(actual_slice));
+    grpc_slice actual_slice = grpc_slice_sub_no_ref(
+        slice, 0, unprotected_bytes_size);
     grpc_slice_buffer_add(unprotected_slices, actual_slice);
   }
 }
@@ -1126,7 +1136,7 @@ static void tsi_ssl_handshaker_factory_init(
 
   factory->vtable = &handshaker_factory_vtable;
   gpr_ref_init(&factory->refcount, 1);
-  gpr_set_log_verbosity(GPR_LOG_SEVERITY_DEBUG);
+//  gpr_set_log_verbosity(GPR_LOG_SEVERITY_DEBUG);
 }
 
 /* --- tsi_handshaker_result methods implementation --- */

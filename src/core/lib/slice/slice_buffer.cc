@@ -290,6 +290,7 @@ void grpc_slice_buffer_move_first_no_ref(grpc_slice_buffer* src, size_t n,
 
 void grpc_slice_buffer_move_first_into_buffer(grpc_slice_buffer* src, size_t n,
                                               void* dst) {
+  grpc_core::ExecCtx exec_ctx;
   char* dstp = static_cast<char*>(dst);
   GPR_ASSERT(src->length >= n);
 
