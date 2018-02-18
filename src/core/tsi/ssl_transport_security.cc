@@ -108,8 +108,8 @@ struct tsi_ssl_connection {
 
   BIO* protect_bio;
   BIO* unprotect_bio;
-  grpc_slice_buffer protect_sb;
-  grpc_slice_buffer unprotect_sb;
+  tsi_ssl_bio protect_sb;
+  tsi_ssl_bio unprotect_sb;
 };
 
 typedef struct {
@@ -854,12 +854,12 @@ static tsi_ssl_connection* ssl_connection_create(SSL* ssl, BIO* network_io) {
   self->ssl = ssl;
   self->network_io = network_io;
 
-  grpc_slice_buffer_init(&self->protect_sb);
+  grpc_slice_buffer_init(&self->protect_sb.data);
   self->protect_bio = BIO_new(&ssl_bio_writer_vtable);
   self->protect_bio->ptr = &self->protect_sb;
   self->protect_bio->init = 1;
 
-  grpc_slice_buffer_init(&self->unprotect_sb);
+  grpc_slice_buffer_init(&self->unprotect_sb.data);
   self->unprotect_bio = BIO_new(&ssl_bio_reader_vtable);
   self->unprotect_bio->ptr = &self->unprotect_sb;
   self->unprotect_bio->init = 1;
@@ -876,8 +876,8 @@ static void ssl_connection_unref(tsi_ssl_connection* self) {
   if (gpr_unref(&self->ref)) {
     SSL_free(self->ssl);
     BIO_free(self->network_io);
-    grpc_slice_buffer_destroy(&self->protect_sb);
-    grpc_slice_buffer_destroy(&self->unprotect_sb);
+    grpc_slice_buffer_destroy(&self->protect_sb.data);
+    grpc_slice_buffer_destroy(&self->unprotect_sb.data);
     gpr_free(self);
   }
 }
@@ -917,7 +917,7 @@ tsi_result ssl_zero_copy_protector_protect(
     }
   }
 
-  grpc_slice_buffer_move_into(&impl->conn->protect_sb, protected_slices);
+  grpc_slice_buffer_move_into(&impl->conn->protect_sb.data, protected_slices);
   return TSI_OK;
 }
 
@@ -927,7 +927,7 @@ tsi_result ssl_zero_copy_protector_unprotect(
   tsi_ssl_zero_copy_frame_protector* impl =
       reinterpret_cast<tsi_ssl_zero_copy_frame_protector*>(self);
 
-  grpc_slice_buffer_move_into(protected_slices, &impl->conn->unprotect_sb);
+  grpc_slice_buffer_move_into(protected_slices, &impl->conn->unprotect_sb.data);
 
   for (;;) {
     grpc_slice slice = grpc_slice_malloc(TSI_SSL_STAGING_BUFFER_SIZE);
@@ -1245,7 +1245,7 @@ static tsi_result ssl_result_create_zero_copy_grpc_protector(
         GRPC_SLICE_LENGTH(slice));
     GPR_ASSERT(read > 0);
     GPR_ASSERT(static_cast<size_t>(read) == pending_network);
-    grpc_slice_buffer_add(&impl->conn->protect_sb, slice);
+    grpc_slice_buffer_add(&impl->conn->protect_sb.data, slice);
   }
 
   BIO* ssl_bio = SSL_get_rbio(impl->conn->ssl);
@@ -1257,7 +1257,7 @@ static tsi_result ssl_result_create_zero_copy_grpc_protector(
         GRPC_SLICE_LENGTH(slice));
     GPR_ASSERT(read > 0);
     GPR_ASSERT(static_cast<size_t>(read) == pending_ssl);
-    grpc_slice_buffer_add(&impl->conn->unprotect_sb, slice);
+    grpc_slice_buffer_add(&impl->conn->unprotect_sb.data, slice);
   }
 
   GPR_ASSERT(BIO_pending(impl->conn->network_io) == 0);
