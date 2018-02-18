@@ -294,7 +294,7 @@ grpc_slice grpc_slice_sub(grpc_slice source, size_t begin, size_t end) {
   grpc_slice subset;
 
   if (end - begin <= sizeof(subset.data.inlined.bytes)) {
-    GPR_ASSERT(source.data.inlined.length >= end);
+    GPR_ASSERT(GRPC_SLICE_LENGTH(source) >= end);
     subset.refcount = nullptr;
     subset.data.inlined.length = static_cast<uint8_t>(end - begin);
     memcpy(subset.data.inlined.bytes, GRPC_SLICE_START_PTR(source) + begin,
