@@ -23,16 +23,12 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#ifdef GPR_WINDOWS
+#include <grpc/grpc.h>
+
 struct iovec {
   void* iov_base;
   size_t iov_len;
 };
-#else
-#include <sys/uio.h>
-#endif
-
-#include <grpc/grpc.h>
 
 /**
  * A gsec interface for AEAD encryption schemes. The API is thread-compatible.

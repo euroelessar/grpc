@@ -6713,7 +6713,9 @@
     "type": "lib"
   }, 
   {
-    "deps": [], 
+    "deps": [
+      "grpc"
+    ], 
     "headers": [
       "test/core/tsi/alts/crypt/gsec_test_util.h", 
       "test/core/tsi/alts/handshaker/alts_handshaker_service_api_test_lib.h"
@@ -8430,7 +8432,10 @@
   }, 
   {
     "deps": [
-      "alts_util"
+      "alts_util", 
+      "gpr", 
+      "grpc_base", 
+      "tsi_interface"
     ], 
     "headers": [
       "src/core/tsi/alts/crypt/gsec.h", 
@@ -8492,7 +8497,11 @@
     "type": "filegroup"
   }, 
   {
-    "deps": [], 
+    "deps": [
+      "gpr", 
+      "grpc_base", 
+      "nanopb"
+    ], 
     "headers": [
       "src/core/lib/security/credentials/alts/check_gcp_environment.h", 
       "src/core/lib/security/credentials/alts/grpc_alts_credentials_options.h", 

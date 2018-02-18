@@ -1049,8 +1049,15 @@ Pod::Spec.new do |s|
 
     ss.source_files = 'src/core/ext/transport/cronet/client/secure/cronet_channel_create.cc',
                       'src/core/ext/transport/cronet/transport/cronet_transport.cc',
+                      'third_party/nanopb/pb_common.c',
+                      'third_party/nanopb/pb_decode.c',
+                      'third_party/nanopb/pb_encode.c',
                       'src/core/ext/transport/cronet/transport/cronet_transport.h',
-                      'third_party/objective_c/Cronet/bidirectional_stream_c.h'
+                      'third_party/objective_c/Cronet/bidirectional_stream_c.h',
+                      'third_party/nanopb/pb.h',
+                      'third_party/nanopb/pb_common.h',
+                      'third_party/nanopb/pb_decode.h',
+                      'third_party/nanopb/pb_encode.h'
   end
 
   s.subspec 'Tests' do |ss|

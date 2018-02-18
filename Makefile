@@ -3315,6 +3315,9 @@ LIBGRPC_SRC = \
     src/core/tsi/alts/handshaker/handshaker.pb.c \
     src/core/tsi/alts/handshaker/transport_security_common.pb.c \
     src/core/tsi/alts/handshaker/transport_security_common_api.cc \
+    third_party/nanopb/pb_common.c \
+    third_party/nanopb/pb_decode.c \
+    third_party/nanopb/pb_encode.c \
     src/core/tsi/transport_security.cc \
     src/core/tsi/transport_security_adapter.cc \
     src/core/ext/transport/chttp2/server/chttp2_server.cc \
@@ -3353,9 +3356,6 @@ LIBGRPC_SRC = \
     src/core/ext/filters/client_channel/lb_policy/grpclb/grpclb_client_stats.cc \
     src/core/ext/filters/client_channel/lb_policy/grpclb/load_balancer_api.cc \
     src/core/ext/filters/client_channel/lb_policy/grpclb/proto/grpc/lb/v1/load_balancer.pb.c \
-    third_party/nanopb/pb_common.c \
-    third_party/nanopb/pb_decode.c \
-    third_party/nanopb/pb_encode.c \
     src/core/ext/filters/client_channel/resolver/fake/fake_resolver.cc \
     src/core/ext/filters/client_channel/lb_policy/pick_first/pick_first.cc \
     src/core/ext/filters/client_channel/lb_policy/subchannel_list.cc \
@@ -3710,6 +3710,9 @@ LIBGRPC_CRONET_SRC = \
     src/core/tsi/alts/handshaker/handshaker.pb.c \
     src/core/tsi/alts/handshaker/transport_security_common.pb.c \
     src/core/tsi/alts/handshaker/transport_security_common_api.cc \
+    third_party/nanopb/pb_common.c \
+    third_party/nanopb/pb_decode.c \
+    third_party/nanopb/pb_encode.c \
     src/core/tsi/transport_security.cc \
     src/core/tsi/transport_security_adapter.cc \
     src/core/ext/transport/chttp2/client/chttp2_connector.cc \

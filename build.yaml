@@ -52,6 +52,8 @@ filegroups:
   - src/core/tsi/alts/zero_copy_frame_protector/alts_zero_copy_grpc_protector.cc
   uses:
   - alts_util
+  - tsi_interface
+  - grpc_base
 - name: alts_util
   headers:
   - src/core/lib/security/credentials/alts/check_gcp_environment.h
@@ -73,6 +75,9 @@ filegroups:
   - src/core/tsi/alts/handshaker/handshaker.pb.c
   - src/core/tsi/alts/handshaker/transport_security_common.pb.c
   - src/core/tsi/alts/handshaker/transport_security_common_api.cc
+  uses:
+  - grpc_base
+  - nanopb
 - name: census
   public_headers:
   - include/grpc/census.h
@@ -1457,6 +1462,8 @@ libs:
   src:
   - test/core/tsi/alts/crypt/gsec_test_util.cc
   - test/core/tsi/alts/handshaker/alts_handshaker_service_api_test_lib.cc
+  deps:
+  - grpc
   secure: true
 - name: grpc++
   build: all

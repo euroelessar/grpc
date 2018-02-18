@@ -254,6 +254,10 @@
     <file baseinstalldir="/" name="src/core/tsi/alts/handshaker/handshaker.pb.h" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/alts/handshaker/transport_security_common.pb.h" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/alts/handshaker/transport_security_common_api.h" role="src" />
+    <file baseinstalldir="/" name="third_party/nanopb/pb.h" role="src" />
+    <file baseinstalldir="/" name="third_party/nanopb/pb_common.h" role="src" />
+    <file baseinstalldir="/" name="third_party/nanopb/pb_decode.h" role="src" />
+    <file baseinstalldir="/" name="third_party/nanopb/pb_encode.h" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/transport_security.h" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/transport_security_adapter.h" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/transport_security_interface.h" role="src" />
@@ -412,10 +416,6 @@
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/grpclb/grpclb_client_stats.h" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/grpclb/load_balancer_api.h" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/grpclb/proto/grpc/lb/v1/load_balancer.pb.h" role="src" />
-    <file baseinstalldir="/" name="third_party/nanopb/pb.h" role="src" />
-    <file baseinstalldir="/" name="third_party/nanopb/pb_common.h" role="src" />
-    <file baseinstalldir="/" name="third_party/nanopb/pb_decode.h" role="src" />
-    <file baseinstalldir="/" name="third_party/nanopb/pb_encode.h" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/resolver/fake/fake_resolver.h" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/subchannel_list.h" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/resolver/dns/c_ares/grpc_ares_ev_driver.h" role="src" />
@@ -647,6 +647,9 @@
     <file baseinstalldir="/" name="src/core/tsi/alts/handshaker/handshaker.pb.c" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/alts/handshaker/transport_security_common.pb.c" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/alts/handshaker/transport_security_common_api.cc" role="src" />
+    <file baseinstalldir="/" name="third_party/nanopb/pb_common.c" role="src" />
+    <file baseinstalldir="/" name="third_party/nanopb/pb_decode.c" role="src" />
+    <file baseinstalldir="/" name="third_party/nanopb/pb_encode.c" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/transport_security.cc" role="src" />
     <file baseinstalldir="/" name="src/core/tsi/transport_security_adapter.cc" role="src" />
     <file baseinstalldir="/" name="src/core/ext/transport/chttp2/server/chttp2_server.cc" role="src" />
@@ -685,9 +688,6 @@
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/grpclb/grpclb_client_stats.cc" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/grpclb/load_balancer_api.cc" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/grpclb/proto/grpc/lb/v1/load_balancer.pb.c" role="src" />
-    <file baseinstalldir="/" name="third_party/nanopb/pb_common.c" role="src" />
-    <file baseinstalldir="/" name="third_party/nanopb/pb_decode.c" role="src" />
-    <file baseinstalldir="/" name="third_party/nanopb/pb_encode.c" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/resolver/fake/fake_resolver.cc" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/pick_first/pick_first.cc" role="src" />
     <file baseinstalldir="/" name="src/core/ext/filters/client_channel/lb_policy/subchannel_list.cc" role="src" />

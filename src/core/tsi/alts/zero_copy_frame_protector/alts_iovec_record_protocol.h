@@ -21,10 +21,6 @@
 
 #include <stdbool.h>
 
-#ifndef GPR_WINDOWS
-#include <sys/uio.h>
-#endif
-
 #include "src/core/tsi/alts/crypt/gsec.h"
 
 constexpr size_t kZeroCopyFrameMessageType = 0x06;
