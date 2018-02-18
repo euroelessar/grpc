@@ -131,6 +131,7 @@ typedef struct {
 struct tsi_ssl_zero_copy_frame_protector {
   tsi_zero_copy_grpc_protector base;
   tsi_ssl_connection *conn;
+  grpc_slice protect_staging_sb;
 };
 
 typedef struct {
@@ -891,12 +892,29 @@ tsi_result ssl_zero_copy_protector_protect(
 
   while (unprotected_slices->length > 0) {
     grpc_slice slice = grpc_slice_buffer_take_first(unprotected_slices);
-    unsigned char* unprotected_bytes = GRPC_SLICE_START_PTR(slice);
-    size_t unprotected_bytes_size = GRPC_SLICE_LENGTH(slice);
-    tsi_result result = do_ssl_write(
-          impl->conn->ssl, unprotected_bytes, unprotected_bytes_size);
-    grpc_slice_unref(slice);
-    if (result != TSI_OK) return result;
+    if (GRPC_SLICE_LENGTH(slice) >= TSI_SSL_STAGING_BUFFER_SIZE) {
+      unsigned char* unprotected_bytes = GRPC_SLICE_START_PTR(slice);
+      size_t unprotected_bytes_size = GRPC_SLICE_LENGTH(slice);
+      tsi_result result = do_ssl_write(
+            impl->conn->ssl, unprotected_bytes, unprotected_bytes_size);
+      grpc_slice_unref(slice);
+      if (result != TSI_OK) return result;
+    } else {
+      grpc_slice_buffer_undo_take_first(unprotected_slices, slice);
+
+      unsigned char *unprotected_bytes = GRPC_SLICE_START_PTR(impl->protect_staging_sb);
+      size_t unprotected_bytes_size = GRPC_SLICE_LENGTH(impl->protect_staging_sb);
+      if (unprotected_bytes_size > unprotected_slices->length) {
+        unprotected_bytes_size = unprotected_slices->length;
+      }
+
+      grpc_slice_buffer_move_first_into_buffer(
+          unprotected_slices, unprotected_bytes_size, unprotected_bytes);
+
+      tsi_result result = do_ssl_write(
+            impl->conn->ssl, unprotected_bytes, unprotected_bytes_size);
+      if (result != TSI_OK) return result;
+    }
   }
 
   grpc_slice_buffer_move_into(&impl->conn->protect_sb, protected_slices);
@@ -939,6 +957,7 @@ void ssl_zero_copy_protector_destroy(tsi_zero_copy_grpc_protector* self) {
       reinterpret_cast<tsi_ssl_zero_copy_frame_protector*>(self);
 
   ssl_connection_unref(impl->conn);
+  grpc_slice_unref(impl->protect_staging_sb);
   gpr_free(impl);
 }
 
@@ -1216,6 +1235,7 @@ static tsi_result ssl_result_create_zero_copy_grpc_protector(
 //  size_t actual_max_output_protected_frame_size =
   set_max_output_protected_frame_size(max_output_protected_frame_size);
   protector_impl->conn = ssl_connection_ref(impl->conn);
+  protector_impl->protect_staging_sb = grpc_slice_malloc(TSI_SSL_STAGING_BUFFER_SIZE);
 
   size_t pending_network = BIO_pending(impl->conn->network_io);
   if (pending_network > 0) {
