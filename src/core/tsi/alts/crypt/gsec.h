@@ -22,7 +22,15 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+#if defined(GPR_WINDOWS)
+struct iovec {
+  void* iov_base;
+  size_t iov_len;
+};
+#else
 #include <sys/uio.h>
+#endif
 
 #include <grpc/grpc.h>
 
