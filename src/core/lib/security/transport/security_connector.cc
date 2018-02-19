@@ -591,8 +591,7 @@ static void ssl_channel_add_handshakers(grpc_channel_security_connector* sc,
   }
   // Create handshakers.
   grpc_handshake_manager_add(
-      handshake_mgr, grpc_security_handshaker_create(
-                         tsi_create_adapter_handshaker(tsi_hs), &sc->base));
+      handshake_mgr, grpc_security_handshaker_create(tsi_hs, &sc->base));
 }
 
 static const char** fill_alpn_protocol_strings(size_t* num_alpn_protocols) {
@@ -700,8 +699,7 @@ static void ssl_server_add_handshakers(grpc_server_security_connector* sc,
   }
   // Create handshakers.
   grpc_handshake_manager_add(
-      handshake_mgr, grpc_security_handshaker_create(
-                         tsi_create_adapter_handshaker(tsi_hs), &sc->base));
+      handshake_mgr, grpc_security_handshaker_create(tsi_hs, &sc->base));
 }
 
 static int ssl_host_matches_name(const tsi_peer* peer, const char* peer_name) {
