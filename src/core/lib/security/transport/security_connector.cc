@@ -559,7 +559,7 @@ void grpc_ssl_session_cache_destroy(grpc_ssl_session_cache* cache) {
 
 static void* grpc_ssl_session_cache_arg_copy(void* p) {
   grpc_ssl_session_cache_ref(static_cast<grpc_ssl_session_cache*>(p));
-  return self;
+  return p;
 }
 
 static void grpc_ssl_session_cache_arg_destroy(void* p) {
@@ -1068,7 +1068,8 @@ grpc_security_status grpc_ssl_channel_security_connector_create(
   result = tsi_create_ssl_client_handshaker_factory(
       has_key_cert_pair ? config->pem_key_cert_pair : nullptr, pem_root_certs,
       ssl_cipher_suites(), alpn_protocol_strings,
-      static_cast<uint16_t>(num_alpn_protocols), ssl_session_cache, &c->client_handshaker_factory);
+      static_cast<uint16_t>(num_alpn_protocols), ssl_session_cache->cache,
+      &c->client_handshaker_factory);
   if (result != TSI_OK) {
     gpr_log(GPR_ERROR, "Handshaker factory creation failed with %s.",
             tsi_result_to_string(result));

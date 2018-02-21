@@ -37,7 +37,7 @@
 
 typedef struct tsi_ssl_session_cache tsi_ssl_session_cache;
 
-tsi_ssl_session_cache* tsi_ssl_session_cache_create(size_t capacity);
+tsi_ssl_session_cache* tsi_ssl_session_cache_create_lru(size_t capacity);
 void tsi_ssl_session_cache_ref(tsi_ssl_session_cache* cache);
 void tsi_ssl_session_cache_unref(tsi_ssl_session_cache* cache);
 

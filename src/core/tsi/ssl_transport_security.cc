@@ -149,10 +149,10 @@ private:
   SSL_SESSION* session_;
 };
 
-class SslSessionCache : public tsi_ssl_session_cache {
+class SslSessionLRUCache : public tsi_ssl_session_cache {
 public:
-  SslSessionCache(size_t capacity);
-  ~SslSessionCache();
+  SslSessionLRUCache(size_t capacity);
+  ~SslSessionLRUCache();
 
   void Ref() { gpr_ref(&ref_); }
   void Unref() {
@@ -173,7 +173,7 @@ private:
   void Put(const char* key, SSL_SESSION* session);
   SSL_SESSION* Get(const char* key);
 
-  static SslSessionCache* GetSelf(SSL* ssl);
+  static SslSessionLRUCache* GetSelf(SSL* ssl);
   static int GetSslExIndex();
   static int SetNewCallback(SSL* ssl, SSL_SESSION* session);
 
@@ -191,17 +191,17 @@ private:
       entry_by_key_;
 };
 
-SslSessionCache::SslSessionCache(size_t capacity) : capacity_(capacity) {
+SslSessionLRUCache::SslSessionLRUCache(size_t capacity) : capacity_(capacity) {
   GPR_ASSERT(capacity > 0);
   gpr_ref_init(&ref_, 1);
   gpr_mu_init(&lock_);
 }
 
-SslSessionCache::~SslSessionCache() {
+SslSessionLRUCache::~SslSessionLRUCache() {
   gpr_mu_destroy(&lock_);
 }
 
-void SslSessionCache::Put(
+void SslSessionLRUCache::Put(
     const char* key, SSL_SESSION* session) {
   Slice key_slice(key);
   mu_guard guard(&lock_);
@@ -227,7 +227,7 @@ void SslSessionCache::Put(
   }
 }
 
-SSL_SESSION* SslSessionCache::Get(const char* key) {
+SSL_SESSION* SslSessionLRUCache::Get(const char* key) {
   Slice key_slice(key);
   mu_guard guard(&lock_);
 
@@ -239,7 +239,7 @@ SSL_SESSION* SslSessionCache::Get(const char* key) {
   return it->GetSession();
 }
 
-SslSessionCache::SslSessionList::iterator SslSessionCache::FindLocked(
+SslSessionLRUCache::SslSessionList::iterator SslSessionLRUCache::FindLocked(
     const Slice& key) {
   auto it = entry_by_key_.find(key);
   if (it == entry_by_key_.end()) {
@@ -254,33 +254,33 @@ SslSessionCache::SslSessionList::iterator SslSessionCache::FindLocked(
   return it->second;
 }
 
-int SslSessionCache::GetSslExIndex() {
+int SslSessionLRUCache::GetSslExIndex() {
   static int id = SSL_CTX_get_ex_new_index(
       0, nullptr, nullptr, nullptr,
       [] (void *parent, void *ptr, CRYPTO_EX_DATA *ad,
           int index, long argl, void *argp) {
-    static_cast<SslSessionCache*>(ptr)->Unref();
+    static_cast<SslSessionLRUCache*>(ptr)->Unref();
   });
   return id;
 }
 
-void SslSessionCache::InitSslExIndex() {
+void SslSessionLRUCache::InitSslExIndex() {
   int id = GetSslExIndex();
   GPR_ASSERT(id != -1);
 }
 
-SslSessionCache* SslSessionCache::GetSelf(SSL* ssl) {
+SslSessionLRUCache* SslSessionLRUCache::GetSelf(SSL* ssl) {
   SSL_CTX* ssl_context = SSL_get_SSL_CTX(ssl);
   if (ssl_context == nullptr) {
       return nullptr;
   }
 
-  return static_cast<SslSessionCache*>(
+  return static_cast<SslSessionLRUCache*>(
         SSL_CTX_get_ex_data(ssl_context, GetSslExIndex()));
 }
 
-int SslSessionCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
-  SslSessionCache* self = GetSelf(ssl);
+int SslSessionLRUCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
+  SslSessionLRUCache* self = GetSelf(ssl);
   if (self == nullptr) {
     return 0;
   }
@@ -295,15 +295,15 @@ int SslSessionCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
   return 0;
 }
 
-void SslSessionCache::InitContext(SSL_CTX* ssl_context) {
+void SslSessionLRUCache::InitContext(SSL_CTX* ssl_context) {
   // SSL_CTX will call Unref on destruction.
   Ref();
   SSL_CTX_set_ex_data(ssl_context, GetSslExIndex(), this);
   SSL_CTX_sess_set_new_cb(ssl_context, SetNewCallback);
 }
 
-void SslSessionCache::ResumeSession(SSL* ssl) {
-  SslSessionCache* self = GetSelf(ssl);
+void SslSessionLRUCache::ResumeSession(SSL* ssl) {
+  SslSessionLRUCache* self = GetSelf(ssl);
   if (self == nullptr) {
     return;
   }
@@ -324,13 +324,13 @@ void SslSessionCache::ResumeSession(SSL* ssl) {
 } // namespace
 } // namespace grpc_core
 
-tsi_ssl_session_cache* tsi_ssl_session_cache_create(size_t capacity) {
-  return grpc_core::New<grpc_core::SslSessionCache>(capacity);
+tsi_ssl_session_cache* tsi_ssl_session_cache_create_lru(size_t capacity) {
+  return grpc_core::New<grpc_core::SslSessionLRUCache>(capacity);
 }
 
-static grpc_core::SslSessionCache* tsi_ssl_session_cache_get_self(
+static grpc_core::SslSessionLRUCache* tsi_ssl_session_cache_get_self(
     tsi_ssl_session_cache* cache) {
-  return static_cast<grpc_core::SslSessionCache*>(cache);
+  return static_cast<grpc_core::SslSessionLRUCache*>(cache);
 }
 
 void tsi_ssl_session_cache_ref(tsi_ssl_session_cache* cache) {
@@ -420,7 +420,7 @@ static void init_openssl(void) {
   }
   CRYPTO_set_locking_callback(openssl_locking_cb);
   CRYPTO_set_id_callback(openssl_thread_id_cb);
-  grpc_core::SslSessionCache::InitSslExIndex();
+  grpc_core::SslSessionLRUCache::InitSslExIndex();
 }
 
 /* --- Ssl utils. ---*/
@@ -1417,7 +1417,7 @@ static tsi_result create_tsi_ssl_handshaker(SSL_CTX* ctx, int is_client,
         return TSI_INTERNAL_ERROR;
       }
     }
-    grpc_core::SslSessionCache::ResumeSession(ssl);
+    grpc_core::SslSessionLRUCache::ResumeSession(ssl);
     ssl_result = SSL_do_handshake(ssl);
     ssl_result = SSL_get_error(ssl, ssl_result);
     if (ssl_result != SSL_ERROR_WANT_READ) {
