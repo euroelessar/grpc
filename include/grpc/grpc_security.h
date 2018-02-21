@@ -98,6 +98,20 @@ GRPCAPI void grpc_auth_context_add_cstring_property(grpc_auth_context* ctx,
 GRPCAPI int grpc_auth_context_set_peer_identity_property_name(
     grpc_auth_context* ctx, const char* name);
 
+/** --- SSL Session Cache. ---
+
+    A ssl session cache object represents a way to cache sessions between
+    connections. */
+typedef struct grpc_ssl_session_cache grpc_ssl_session_cache;
+
+GRPCAPI grpc_ssl_session_cache* grpc_ssl_session_cache_create_lru(
+    size_t capacity);
+
+/** Destroy SSL session cache. */
+GRPCAPI void grpc_ssl_session_cache_destroy(grpc_ssl_session_cache* cache);
+
+GRPCAPI const grpc_arg_pointer_vtable* grpc_ssl_session_cache_arg_vtable();
+
 /** --- grpc_channel_credentials object. ---
 
    A channel credentials object represents a way to authenticate a client on a
@@ -157,34 +171,9 @@ GRPCAPI grpc_channel_credentials* grpc_ssl_credentials_create(
     const char* pem_root_certs, grpc_ssl_pem_key_cert_pair* pem_key_cert_pair,
     void* reserved);
 
-/** --- grpc_ssl_session_cache object. ---
-
-   A ssl session cache object represents a way to cache session between connections. */
-
-typedef struct grpc_ssl_session grpc_ssl_session;
-
-/** Increase reference counter for the session */
-GRPCAPI void grpc_ssl_session_ref(grpc_ssl_session* session);
-/** Decrease reference counter for the session */
-GRPCAPI void grpc_ssl_session_unref(grpc_ssl_session* session);
-
-/** SSL session cache for session tickets (RFC 5077).
- *  Implementation must be thread safe.
- */
-typedef struct grpc_ssl_session_cache {
-    /**
-     * Put is called by grpc-core to store session by the given key.
-     * Caller owns the session, so cache implementation should call
-     * `grpc_ssl_session_ref`.
-     */
-    void (*put) (const char* key, grpc_ssl_session* session);
-    /**
-     * Get session for the given key from the cache (if any).
-     * Caller owns returned session, so cache implementation should call
-     * `grpc_ssl_session_ref` on session before returning one.
-     */
-    grpc_ssl_session* (*get) (const char* key);
-} grpc_ssl_session_cache;
+GRPCAPI grpc_channel_credentials* grpc_ssl_credentials_create_with_session_cache(
+    const char* pem_root_certs, grpc_ssl_pem_key_cert_pair* pem_key_cert_pair,
+    grpc_ssl_session_cache* session_cache);
 
 /** --- grpc_call_credentials object.
 

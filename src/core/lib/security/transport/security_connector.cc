@@ -531,6 +531,53 @@ grpc_server_security_connector* grpc_fake_server_security_connector_create(
 
 /* --- Ssl implementation. --- */
 
+struct grpc_ssl_session_cache {
+  gpr_refcount ref;
+  tsi_ssl_session_cache* cache;
+};
+
+grpc_ssl_session_cache* grpc_ssl_session_cache_create_lru(size_t capacity) {
+  grpc_ssl_session_cache* cache = static_cast<grpc_ssl_session_cache*>(
+      gpr_zalloc(sizeof(*cache)));
+
+  gpr_ref_init(&cache->ref, 1);
+  cache->cache = tsi_ssl_session_cache_create_lru(capacity);
+
+  return cache;
+}
+
+static void grpc_ssl_session_cache_ref(grpc_ssl_session_cache* cache) {
+  gpr_ref(&cache->ref);
+}
+
+void grpc_ssl_session_cache_destroy(grpc_ssl_session_cache* cache) {
+  if (gpr_unref(&cache->ref)) {
+    tsi_ssl_session_cache_unref(cache->cache);
+    gpr_free(cache);
+  }
+}
+
+static void* grpc_ssl_session_cache_arg_copy(void* p) {
+  grpc_ssl_session_cache_ref(static_cast<grpc_ssl_session_cache*>(p));
+  return self;
+}
+
+static void grpc_ssl_session_cache_arg_destroy(void* p) {
+  grpc_ssl_session_cache_destroy(static_cast<grpc_ssl_session_cache*>(p));
+}
+
+static int grpc_ssl_session_cache_arg_cmp(void* p, void* q) {
+  return GPR_ICMP(p, q);
+}
+
+const grpc_arg_pointer_vtable* grpc_ssl_session_cache_arg_vtable() {
+  static const grpc_arg_pointer_vtable vtable = {
+    grpc_ssl_session_cache_arg_copy, grpc_ssl_session_cache_arg_destroy,
+    grpc_ssl_session_cache_arg_cmp,
+  };
+  return &vtable;
+}
+
 typedef struct {
   grpc_channel_security_connector base;
   tsi_ssl_client_handshaker_factory* client_handshaker_factory;

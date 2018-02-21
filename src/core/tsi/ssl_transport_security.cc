@@ -22,6 +22,8 @@
 
 #include <limits.h>
 #include <string.h>
+#include <list>
+#include <unordered_map>
 
 /* TODO(jboeuf): refactor inet_ntop into a portability header. */
 /* Note: for whomever reads this and tries to refactor this, this
@@ -38,6 +40,7 @@
 #include <grpc/support/sync.h>
 #include <grpc/support/thd_id.h>
 #include <grpc/support/string_util.h>
+#include <grpc/slice.h>
 
 extern "C" {
 #include <openssl/bio.h>
@@ -48,6 +51,7 @@ extern "C" {
 #include <openssl/x509v3.h>
 }
 
+#include "src/core/lib/gprpp/memory.h"
 #include "src/core/tsi/ssl_types.h"
 #include "src/core/tsi/transport_security.h"
 
@@ -66,6 +70,277 @@ extern "C" {
 /* TODO(jboeuf): I have not found a way to get this number dynamically from the
    SSL structure. This is what we would ultimately want though... */
 #define TSI_SSL_MAX_PROTECTION_OVERHEAD 100
+
+/* --- tsi ssl session tickets support. --- */
+
+struct tsi_ssl_session_cache {};
+
+namespace grpc_core {
+namespace {
+
+struct SliceHash;
+
+class Slice {
+public:
+  Slice(const char *source) : slice_(grpc_slice_from_copied_string(source)) {
+  }
+
+  Slice(const Slice& other) : slice_(grpc_slice_ref(other.slice_)) {
+  }
+
+  ~Slice() {
+    grpc_slice_unref(slice_);
+  }
+
+  Slice& operator=(const Slice& other) {
+    grpc_slice_unref(slice_);
+    slice_ = grpc_slice_ref(other.slice_);
+    return *this;
+  }
+
+  bool operator==(const Slice& other) const {
+    return grpc_slice_cmp(slice_, other.slice_) == 0;
+  }
+
+private:
+  friend struct SliceHash;
+
+  grpc_slice slice_;
+};
+
+struct SliceHash {
+  uint32_t operator()(const Slice& slice) const noexcept {
+    return grpc_slice_hash(slice.slice_);
+  }
+};
+
+class SslSession {
+public:
+  SslSession(const Slice& key, SSL_SESSION* session)
+      : key_(key), session_(session) {
+    SSL_SESSION_up_ref(session_);
+  }
+
+  ~SslSession() {
+    SSL_SESSION_free(session_);
+  }
+
+  // Not copyable nor movable.
+  SslSession(const SslSession&) = delete;
+  SslSession& operator=(const SslSession&) = delete;
+
+  const Slice& Key() const {
+    return key_;
+  }
+
+  SSL_SESSION* GetSession() const {
+    SSL_SESSION_up_ref(session_);
+    return session_;
+  }
+
+  void SetSession(SSL_SESSION* session) {
+    SSL_SESSION_free(session_);
+    session_ = session;
+    SSL_SESSION_up_ref(session_);
+  }
+
+private:
+  Slice key_;
+  SSL_SESSION* session_;
+};
+
+class SslSessionCache : public tsi_ssl_session_cache {
+public:
+  SslSessionCache(size_t capacity);
+  ~SslSessionCache();
+
+  void Ref() { gpr_ref(&ref_); }
+  void Unref() {
+    if (gpr_unref(&ref_)) {
+      Delete(this);
+    }
+  }
+
+  void InitContext(SSL_CTX* ssl_context);
+  static void InitSslExIndex();
+  static void ResumeSession(SSL* ssl);
+
+private:
+  typedef std::list<SslSession, Allocator<SslSession>> SslSessionList;
+
+  SslSessionList::iterator FindLocked(const Slice& key);
+
+  void Put(const char* key, SSL_SESSION* session);
+  SSL_SESSION* Get(const char* key);
+
+  static SslSessionCache* GetSelf(SSL* ssl);
+  static int GetSslExIndex();
+  static int SetNewCallback(SSL* ssl, SSL_SESSION* session);
+
+  gpr_refcount ref_;
+  gpr_mu lock_;
+  size_t capacity_;
+
+  std::list<SslSession, Allocator<SslSession>> use_order_list_;
+  std::unordered_map<
+      Slice,
+      SslSessionList::iterator,
+      SliceHash,
+      std::equal_to<Slice>,
+      Allocator<std::pair<const Slice, SslSessionList::iterator>>>
+      entry_by_key_;
+};
+
+SslSessionCache::SslSessionCache(size_t capacity) : capacity_(capacity) {
+  GPR_ASSERT(capacity > 0);
+  gpr_ref_init(&ref_, 1);
+  gpr_mu_init(&lock_);
+}
+
+SslSessionCache::~SslSessionCache() {
+  gpr_mu_destroy(&lock_);
+}
+
+void SslSessionCache::Put(
+    const char* key, SSL_SESSION* session) {
+  Slice key_slice(key);
+  mu_guard guard(&lock_);
+
+  SslSessionList::iterator it = FindLocked(key_slice);
+  if (it != use_order_list_.end()) {
+    it->SetSession(session);
+    return;
+  }
+
+  use_order_list_.emplace_front(key_slice, session);
+  auto emplace_result = entry_by_key_.emplace(
+      key_slice, use_order_list_.begin());
+  GPR_ASSERT(emplace_result.second);
+
+  if (use_order_list_.size() > capacity_) {
+    it = std::prev(use_order_list_.end());
+    GPR_ASSERT(it != use_order_list_.end());
+
+    size_t removed_count = entry_by_key_.erase(it->Key());
+    GPR_ASSERT(removed_count == 1);
+    use_order_list_.splice(use_order_list_.begin(), use_order_list_, it);
+  }
+}
+
+SSL_SESSION* SslSessionCache::Get(const char* key) {
+  Slice key_slice(key);
+  mu_guard guard(&lock_);
+
+  SslSessionList::iterator it = FindLocked(key_slice);
+  if (it == use_order_list_.end()) {
+    return nullptr;
+  }
+
+  return it->GetSession();
+}
+
+SslSessionCache::SslSessionList::iterator SslSessionCache::FindLocked(
+    const Slice& key) {
+  auto it = entry_by_key_.find(key);
+  if (it == entry_by_key_.end()) {
+    return use_order_list_.end();
+  }
+
+  // Move to the beginning.
+  if (it->second != use_order_list_.begin()) {
+    use_order_list_.splice(use_order_list_.begin(), use_order_list_, it->second);
+  }
+
+  return it->second;
+}
+
+int SslSessionCache::GetSslExIndex() {
+  static int id = SSL_CTX_get_ex_new_index(
+      0, nullptr, nullptr, nullptr,
+      [] (void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+          int index, long argl, void *argp) {
+    static_cast<SslSessionCache*>(ptr)->Unref();
+  });
+  return id;
+}
+
+void SslSessionCache::InitSslExIndex() {
+  int id = GetSslExIndex();
+  GPR_ASSERT(id != -1);
+}
+
+SslSessionCache* SslSessionCache::GetSelf(SSL* ssl) {
+  SSL_CTX* ssl_context = SSL_get_SSL_CTX(ssl);
+  if (ssl_context == nullptr) {
+      return nullptr;
+  }
+
+  return static_cast<SslSessionCache*>(
+        SSL_CTX_get_ex_data(ssl_context, GetSslExIndex()));
+}
+
+int SslSessionCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
+  SslSessionCache* self = GetSelf(ssl);
+  if (self == nullptr) {
+    return 0;
+  }
+
+  const char *server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+  if (server_name == nullptr) {
+    return 0;
+  }
+
+  self->Put(server_name, session);
+  // Don't take ownership over session reference.
+  return 0;
+}
+
+void SslSessionCache::InitContext(SSL_CTX* ssl_context) {
+  // SSL_CTX will call Unref on destruction.
+  Ref();
+  SSL_CTX_set_ex_data(ssl_context, GetSslExIndex(), this);
+  SSL_CTX_sess_set_new_cb(ssl_context, SetNewCallback);
+}
+
+void SslSessionCache::ResumeSession(SSL* ssl) {
+  SslSessionCache* self = GetSelf(ssl);
+  if (self == nullptr) {
+    return;
+  }
+
+  const char *server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+  if (server_name == nullptr) {
+      return;
+  }
+
+  SSL_SESSION* session = self->Get(server_name);
+  if (session != nullptr) {
+    SSL_set_session(ssl, session);
+    // SSL_get_session increments reference counter.
+    SSL_SESSION_free(session);
+  }
+}
+
+} // namespace
+} // namespace grpc_core
+
+tsi_ssl_session_cache* tsi_ssl_session_cache_create(size_t capacity) {
+  return grpc_core::New<grpc_core::SslSessionCache>(capacity);
+}
+
+static grpc_core::SslSessionCache* tsi_ssl_session_cache_get_self(
+    tsi_ssl_session_cache* cache) {
+  return static_cast<grpc_core::SslSessionCache*>(cache);
+}
+
+void tsi_ssl_session_cache_ref(tsi_ssl_session_cache* cache) {
+  tsi_ssl_session_cache_get_self(cache)->Ref();
+}
+
+void tsi_ssl_session_cache_unref(tsi_ssl_session_cache* cache) {
+  tsi_ssl_session_cache_get_self(cache)->Unref();
+}
+
 
 /* --- Structure definitions. ---*/
 
@@ -117,7 +392,6 @@ static gpr_mu* openssl_mutexes = nullptr;
 static void openssl_locking_cb(int mode, int type, const char* file,
                                int line) GRPC_UNUSED;
 static unsigned long openssl_thread_id_cb(void) GRPC_UNUSED;
-static int ssl_session_cache_id = -1;
 
 static void openssl_locking_cb(int mode, int type, const char* file, int line) {
   if (mode & CRYPTO_LOCK) {
@@ -146,7 +420,7 @@ static void init_openssl(void) {
   }
   CRYPTO_set_locking_callback(openssl_locking_cb);
   CRYPTO_set_id_callback(openssl_thread_id_cb);
-  ssl_session_cache_id = SSL_CTX_get_ex_new_index(0, nullptr, nullptr, nullptr, nullptr);
+  grpc_core::SslSessionCache::InitSslExIndex();
 }
 
 /* --- Ssl utils. ---*/
@@ -1143,7 +1417,7 @@ static tsi_result create_tsi_ssl_handshaker(SSL_CTX* ctx, int is_client,
         return TSI_INTERNAL_ERROR;
       }
     }
-    tsi_ssl_maybe_resume_session(ssl);
+    grpc_core::SslSessionCache::ResumeSession(ssl);
     ssl_result = SSL_do_handshake(ssl);
     ssl_result = SSL_get_error(ssl, ssl_result);
     if (ssl_result != SSL_ERROR_WANT_READ) {
@@ -1362,154 +1636,6 @@ static int server_handshaker_factory_npn_advertised_callback(
   return SSL_TLSEXT_ERR_OK;
 }
 
-/* --- tsi ssl session tickets support. --- */
-
-namespace grpc_core {
-namespace tsi {
-
-SslSession::SslSession(SSL_SESSION* session) : session_(session) {
-  SSL_SESSION_up_ref(session_);
-}
-
-SslSession::~SslSession() {
-  SSL_SESSION_free(session_);
-}
-
-SslSessionCache::SslSessionCache() {
-}
-
-namespace {
-class MutexGuard {
-public:
-  MutexGuard(gpr_mu *lock) : lock_(lock) {
-    gpr_mu_lock(lock_);
-  }
-  ~MutexGuard() {
-    gpr_mu_unlock(lock_);
-  }
-
-  // Not copyable nor movable.
-  MutexGuard(const MutexGuard&) = delete;
-  MutexGuard& operator=(const MutexGuard&) = delete;
-
-private:
-  gpr_mu *lock_;
-};
-} // namespace
-
-class SslSessionLRUCache::Entry {
-public:
-  Entry(const char *key, const RefCountedPtr<SslSession> &session) : session(session) {
-    this->key = gpr_strdup(key);
-  }
-
-  ~Entry() {
-    if (key != nullptr) {
-      gpr_free(key);
-    }
-  }
-
-  // Not copyable nor movable.
-  Entry(const Entry&) = delete;
-  Entry& operator =(const Entry&) = delete;
-
-  char* key = nullptr;
-  RefCountedPtr<SslSession> session;
-};
-
-SslSessionLRUCache::SslSessionLRUCache(size_t capacity) : capacity_(capacity) {
-  GPR_ASSERT(capacity > 0);
-  gpr_mu_init(&lock_);
-}
-
-SslSessionLRUCache::~SslSessionLRUCache() {
-  gpr_mu_destroy(&lock_);
-}
-
-void SslSessionLRUCache::Put(const char* key, const RefCountedPtr<SslSession>& session) {
-  MutexGuard guard(&lock_);
-
-  EntryList::iterator it = FindLocked(key);
-  if (it != entries_.end()) {
-    it->session = session;
-    return;
-  }
-
-  if (entries_.size() < capacity_) {
-    entries_.emplace_front(key, session);
-    return;
-  }
-
-  it = std::prev(entries_.end());
-  gpr_free(it->key);
-  it->key = gpr_strdup(key);
-  it->session = session;
-  entries_.splice(entries_.begin(), entries_, it);
-}
-
-RefCountedPtr<SslSession> SslSessionLRUCache::Get(const char* key) {
-  MutexGuard guard(&lock_);
-
-  EntryList::iterator it = FindLocked(key);
-  if (it == entries_.end()) {
-    return RefCountedPtr<SslSession>();
-  }
-
-  // Move to the beginning;
-  if (it != entries_.begin()) {
-    entries_.splice(entries_.begin(), entries_, it);
-  }
-
-  return it->session;
-}
-
-SslSessionLRUCache::EntryList::iterator SslSessionLRUCache::FindLocked(const char* key) {
-  return std::find_if(entries_.begin(), entries_.end(), [key] (Entry &entry) {
-    return strcmp(entry.key, key) == 0;
-  });
-}
-
-} // namespace tsi
-} // namespace grpc_core
-
-static grpc_ssl_session_cache* tsi_ssl_get_session_cache(SSL *ssl) {
-    SSL_CTX* session_context = SSL_get_SSL_CTX(ssl);
-    if (session_context == nullptr) {
-        return nullptr;
-    }
-
-    return static_cast<grpc_ssl_session_cache*>(
-        SSL_CTX_get_ex_data(ssl_context, ssl_session_cache_id));
-}
-
-static int tsi_ssl_session_set_new_callback(SSL* ssl, SSL_SESSION* session) {
-    grpc_ssl_session_cache* ssl_session_cache = tsi_ssl_get_session_cache(ssl);
-    if (ssl_session_cache == nullptr) {
-        return;
-    }
-
-    const char *server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
-    if (server_name == nullptr) {
-        return;
-    }
-
-    ssl_session_cache->put(server_name, session);
-}
-
-static void tsi_ssl_maybe_resume_session(SSL* ssl) {
-    grpc_ssl_session_cache* ssl_session_cache = tsi_ssl_get_session_cache(ssl);
-    if (ssl_session_cache == nullptr) {
-        return;
-    }
-
-    const char *server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
-    if (server_name == nullptr) {
-        return;
-    }
-
-    SSL_SESSION* session = ssl_session_cache->get(server_name);
-}
-
 /* --- tsi_ssl_handshaker_factory constructors. --- */
 
 static tsi_ssl_handshaker_factory_vtable client_handshaker_factory_vtable = {
@@ -1519,7 +1645,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
     const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
-    const grpc_core::RefCountedPtr<SslSessionCache>& ssl_session_cache,
+    tsi_ssl_session_cache* ssl_session_cache,
     tsi_ssl_client_handshaker_factory** factory) {
   SSL_CTX* ssl_context = nullptr;
   tsi_ssl_client_handshaker_factory* impl = nullptr;
@@ -1538,8 +1664,8 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
   }
 
   if (ssl_session_cache) {
-    SSL_CTX_set_ex_data(ssl_context, ssl_session_cache_id, ssl_session_cache);
-    SSL_CTX_sess_set_new_cb(ssl_context, tsi_ssl_session_set_new_callback);
+    auto cache = tsi_ssl_session_cache_get_self(ssl_session_cache);
+    cache->InitContext(ssl_context);
   }
 
   impl = static_cast<tsi_ssl_client_handshaker_factory*>(
