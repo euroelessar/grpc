@@ -60,7 +60,6 @@ static grpc_security_status ssl_create_security_connector(
     if (strcmp(arg->key, GRPC_SSL_TARGET_NAME_OVERRIDE_ARG) == 0 &&
         arg->type == GRPC_ARG_STRING) {
       overridden_target_name = arg->value.string;
-      break;
     }
     if (strcmp(arg->key, GRPC_SSL_SESSION_CACHE_ARG) == 0 &&
         arg->type == GRPC_ARG_POINTER) {

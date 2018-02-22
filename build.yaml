@@ -938,12 +938,14 @@ filegroups:
   headers:
   - src/core/tsi/alts_transport_security.h
   - src/core/tsi/fake_transport_security.h
+  - src/core/tsi/ssl_session_cache.h
   - src/core/tsi/ssl_transport_security.h
   - src/core/tsi/ssl_types.h
   - src/core/tsi/transport_security_grpc.h
   src:
   - src/core/tsi/alts_transport_security.cc
   - src/core/tsi/fake_transport_security.cc
+  - src/core/tsi/ssl_session_cache.cc
   - src/core/tsi/ssl_transport_security.cc
   - src/core/tsi/transport_security_grpc.cc
   deps:
@@ -3231,6 +3233,19 @@ targets:
   corpus_dirs:
   - test/core/security/corpus/ssl_server_corpus
   maxlen: 2048
+- name: ssl_session_cache_test
+  build: test
+  language: c
+  src:
+  - test/core/tsi/ssl_session_cache_test.cc
+  deps:
+  - gpr_test_util
+  - gpr
+  - grpc
+  platforms:
+  - linux
+  - posix
+  - mac
 - name: ssl_transport_security_test
   build: test
   language: c
@@ -4280,6 +4295,22 @@ targets:
   - test/core/end2end/end2end_tests.h
   src:
   - test/core/end2end/h2_ssl_cert_test.cc
+  deps:
+  - grpc_test_util
+  - grpc++
+  - grpc
+  - gpr_test_util
+  - gpr
+  uses:
+  - grpc++_test
+- name: h2_ssl_session_reuse_test
+  gtest: true
+  build: test
+  language: c++
+  headers:
+  - test/core/end2end/end2end_tests.h
+  src:
+  - test/core/end2end/h2_ssl_session_reuse_test.cc
   deps:
   - grpc_test_util
   - grpc++

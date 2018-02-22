@@ -1397,6 +1397,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
     return TSI_INVALID_ARGUMENT;
   }
 
+  gpr_log(GPR_ERROR, "session cache: %p", ssl_session_cache);
   if (ssl_session_cache) {
     grpc_core::SslSessionLRUCache::InitContext(ssl_session_cache, ssl_context);
     SSL_CTX_set_session_cache_mode(ssl_context, SSL_SESS_CACHE_CLIENT);

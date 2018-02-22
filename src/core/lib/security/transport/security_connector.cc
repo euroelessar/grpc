@@ -800,6 +800,9 @@ grpc_auth_context* tsi_ssl_peer_to_auth_context(const tsi_peer* peer) {
     } else if (strcmp(prop->name, TSI_X509_PEM_CERT_PROPERTY) == 0) {
       grpc_auth_context_add_property(ctx, GRPC_X509_PEM_CERT_PROPERTY_NAME,
                                      prop->value.data, prop->value.length);
+    } else if (strcmp(prop->name, TSI_SSL_SESSION_REUSED_PEER_PROPERTY) == 0) {
+      grpc_auth_context_add_property(ctx, GRPC_SSL_SESSION_REUSED_PROPERTY,
+                                     prop->value.data, prop->value.length);
     }
   }
   if (peer_identity_property_name != nullptr) {
@@ -1072,7 +1075,8 @@ grpc_security_status grpc_ssl_channel_security_connector_create(
   result = tsi_create_ssl_client_handshaker_factory(
       has_key_cert_pair ? config->pem_key_cert_pair : nullptr, pem_root_certs,
       ssl_cipher_suites(), alpn_protocol_strings,
-      static_cast<uint16_t>(num_alpn_protocols), ssl_session_cache->cache,
+      static_cast<uint16_t>(num_alpn_protocols),
+      ssl_session_cache ? ssl_session_cache->cache : nullptr,
       &c->client_handshaker_factory);
   if (result != TSI_OK) {
     gpr_log(GPR_ERROR, "Handshaker factory creation failed with %s.",
