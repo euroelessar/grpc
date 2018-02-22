@@ -248,7 +248,7 @@ static void verify_matches(expectation* e, grpc_event* ev) {
 }
 
 void cq_verify(cq_verifier* v) {
-  const gpr_timespec deadline = grpc_timeout_seconds_to_deadline(10);
+  const gpr_timespec deadline = grpc_timeout_seconds_to_deadline(600);
   while (v->first_expectation != nullptr) {
     grpc_event ev = grpc_completion_queue_next(v->cq, deadline, nullptr);
     if (ev.type == GRPC_QUEUE_TIMEOUT) {
