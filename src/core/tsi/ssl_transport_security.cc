@@ -1018,25 +1018,34 @@ static tsi_result ssl_handshaker_extract_peer(tsi_handshaker* self,
     SSL_get0_next_proto_negotiated(impl->ssl, &alpn_selected,
                                    &alpn_selected_len);
   }
+
+  // 1 is for session reused property.
+  size_t new_property_count = peer->property_count + 1;
+  if (alpn_selected != nullptr) new_property_count++;
+  tsi_peer_property* new_properties = static_cast<tsi_peer_property*>(
+      gpr_zalloc(sizeof(*new_properties) * new_property_count));
+  for (size_t i = 0; i < peer->property_count; i++) {
+    new_properties[i] = peer->properties[i];
+  }
+  if (peer->properties != nullptr) gpr_free(peer->properties);
+  peer->properties = new_properties;
+
   if (alpn_selected != nullptr) {
-    size_t i;
-    tsi_peer_property* new_properties = static_cast<tsi_peer_property*>(
-        gpr_zalloc(sizeof(*new_properties) * (peer->property_count + 1)));
-    for (i = 0; i < peer->property_count; i++) {
-      new_properties[i] = peer->properties[i];
-    }
     result = tsi_construct_string_peer_property(
         TSI_SSL_ALPN_SELECTED_PROTOCOL,
         reinterpret_cast<const char*>(alpn_selected), alpn_selected_len,
-        &new_properties[peer->property_count]);
-    if (result != TSI_OK) {
-      gpr_free(new_properties);
-      return result;
-    }
-    if (peer->properties != nullptr) gpr_free(peer->properties);
+        &peer->properties[peer->property_count]);
+    if (result != TSI_OK) return result;
     peer->property_count++;
-    peer->properties = new_properties;
   }
+
+  result = tsi_construct_string_peer_property_from_cstring(
+      TSI_SSL_SESSION_REUSED_PEER_PROPERTY,
+      SSL_session_reused(impl->ssl) ? "true" : "false",
+      &peer->properties[peer->property_count]);
+  if (result != TSI_OK) return result;
+  peer->property_count++;
+
   return result;
 }
 
@@ -1131,7 +1140,6 @@ static tsi_result create_tsi_ssl_handshaker(SSL_CTX* ctx, int is_client,
   }
   SSL_set_bio(ssl, ssl_io, ssl_io);
   if (is_client) {
-    gpr_log(GPR_ERROR, "create_tsi_ssl_handshaker, ctx: %p, sni: %s", ctx, server_name_indication);
     int ssl_result;
     SSL_set_connect_state(ssl);
     if (server_name_indication != nullptr) {
@@ -1390,8 +1398,8 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
   }
 
   if (ssl_session_cache) {
-    auto cache = tsi_ssl_session_cache_get_self(ssl_session_cache);
-    cache->InitContext(ssl_context);
+    grpc_core::SslSessionLRUCache::InitContext(ssl_session_cache, ssl_context);
+    SSL_CTX_set_session_cache_mode(ssl_context, SSL_SESS_CACHE_CLIENT);
   }
 
   impl = static_cast<tsi_ssl_client_handshaker_factory*>(
@@ -1454,12 +1462,14 @@ tsi_result tsi_create_ssl_server_handshaker_factory(
     size_t num_key_cert_pairs, const char* pem_client_root_certs,
     int force_client_auth, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
+    const char* stek_key, size_t stek_key_size,
     tsi_ssl_server_handshaker_factory** factory) {
   return tsi_create_ssl_server_handshaker_factory_ex(
       pem_key_cert_pairs, num_key_cert_pairs, pem_client_root_certs,
       force_client_auth ? TSI_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY
                         : TSI_DONT_REQUEST_CLIENT_CERTIFICATE,
-      cipher_suites, alpn_protocols, num_alpn_protocols, factory);
+      cipher_suites, alpn_protocols, num_alpn_protocols,
+      stek_key, stek_key_size, factory);
 }
 
 tsi_result tsi_create_ssl_server_handshaker_factory_ex(
@@ -1467,7 +1477,8 @@ tsi_result tsi_create_ssl_server_handshaker_factory_ex(
     size_t num_key_cert_pairs, const char* pem_client_root_certs,
     tsi_client_certificate_request_type client_certificate_request,
     const char* cipher_suites, const char** alpn_protocols,
-    uint16_t num_alpn_protocols, tsi_ssl_server_handshaker_factory** factory) {
+    uint16_t num_alpn_protocols, const char* stek_key, size_t stek_key_size,
+    tsi_ssl_server_handshaker_factory** factory) {
   tsi_ssl_server_handshaker_factory* impl = nullptr;
   tsi_result result = TSI_OK;
   size_t i = 0;
@@ -1517,6 +1528,15 @@ tsi_result tsi_create_ssl_server_handshaker_factory_ex(
       result = populate_ssl_context(impl->ssl_contexts[i],
                                     &pem_key_cert_pairs[i], cipher_suites);
       if (result != TSI_OK) break;
+
+      if (stek_key != nullptr) {
+        if (SSL_CTX_set_tlsext_ticket_keys(
+            impl->ssl_contexts[i], stek_key, stek_key_size) == 0) {
+          gpr_log(GPR_ERROR, "Invalid STEK size.");
+          result = TSI_INVALID_ARGUMENT;
+          break;
+        }
+      }
 
       if (pem_client_root_certs != nullptr) {
         STACK_OF(X509_NAME)* root_names = nullptr;

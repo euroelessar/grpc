@@ -1,3 +1,21 @@
+/*
+ *
+ * Copyright 2017 gRPC authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
 #ifndef GRPC_CORE_TSI_SSL_SESSION_CACHE_H
 #define GRPC_CORE_TSI_SSL_SESSION_CACHE_H
 
@@ -29,16 +47,24 @@ struct SliceEqualTo {
   }
 };
 
+struct SslSessionDeleter {
+  void operator()(SSL_SESSION* session) {
+    SSL_SESSION_free(session);
+  }
+};
+
+typedef std::unique_ptr<SSL_SESSION, SslSessionDeleter> SslSessionPtr;
+
+SslSessionPtr ssl_session_clone(const SslSessionPtr &other);
+
 class SslSession {
 public:
-  SslSession(const grpc_slice &key, SSL_SESSION* session)
-      : key_(key), session_(session) {
-    SSL_SESSION_up_ref(session_);
+  SslSession(const grpc_slice& key, SslSessionPtr session)
+      : key_(key), session_(std::move(session)) {
   }
 
   ~SslSession() {
     grpc_slice_unref(key_);
-    SSL_SESSION_free(session_);
   }
 
   // Not copyable nor movable.
@@ -49,20 +75,17 @@ public:
     return key_;
   }
 
-  SSL_SESSION* GetSession() const {
-    SSL_SESSION_up_ref(session_);
-    return session_;
+  SslSessionPtr GetSession() const {
+    return ssl_session_clone(session_);
   }
 
-  void SetSession(SSL_SESSION* session) {
-    SSL_SESSION_free(session_);
-    session_ = session;
-    SSL_SESSION_up_ref(session_);
+  void SetSession(SslSessionPtr session) {
+    session_ = std::move(session);
   }
 
 private:
   grpc_slice key_;
-  SSL_SESSION* session_;
+  SslSessionPtr session_;
 };
 
 class SslSessionLRUCache : public tsi_ssl_session_cache {
@@ -77,7 +100,11 @@ public:
     }
   }
 
-  void InitContext(SSL_CTX* ssl_context);
+  void Put(const char* key, SslSessionPtr session);
+  SslSessionPtr Get(const char* key);
+  size_t Size();
+
+  static void InitContext(tsi_ssl_session_cache* cache, SSL_CTX* ssl_context);
   static void InitSslExIndex();
   static void ResumeSession(SSL* ssl);
 
@@ -85,9 +112,6 @@ private:
   typedef std::list<SslSession, Allocator<SslSession>> SslSessionList;
 
   SslSessionList::iterator FindLocked(const grpc_slice& key);
-
-  void Put(const char* key, SSL_SESSION* session);
-  SSL_SESSION* Get(const char* key);
 
   static SslSessionLRUCache* GetSelf(SSL* ssl);
   static int GetSslExIndex();

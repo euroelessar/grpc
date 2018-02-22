@@ -681,7 +681,8 @@ static bool try_replace_server_handshaker_factory(
       get_tsi_client_certificate_request_type(
           server_creds->config.client_certificate_request),
       ssl_cipher_suites(), alpn_protocol_strings,
-      static_cast<uint16_t>(num_alpn_protocols), &new_handshaker_factory);
+      static_cast<uint16_t>(num_alpn_protocols), nullptr, 0,
+      &new_handshaker_factory);
   gpr_free(cert_pairs);
   gpr_free((void*)alpn_protocol_strings);
 
@@ -1130,7 +1131,7 @@ grpc_security_status grpc_ssl_server_security_connector_create(
             server_credentials->config.client_certificate_request),
         ssl_cipher_suites(), alpn_protocol_strings,
         static_cast<uint16_t>(num_alpn_protocols),
-        &c->server_handshaker_factory);
+        nullptr, 0, &c->server_handshaker_factory);
     gpr_free((void*)alpn_protocol_strings);
     if (result != TSI_OK) {
       gpr_log(GPR_ERROR, "Handshaker factory creation failed with %s.",

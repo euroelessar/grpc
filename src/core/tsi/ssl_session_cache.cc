@@ -1,6 +1,31 @@
+/*
+ *
+ * Copyright 2017 gRPC authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ */
+
 #include "src/core/tsi/ssl_session_cache.h"
 
+#include <grpc/support/log.h>
+
 namespace grpc_core {
+
+SslSessionPtr ssl_session_clone(const SslSessionPtr& other) {
+  SSL_SESSION_up_ref(other.get());
+  return SslSessionPtr(other.get());
+}
 
 SslSessionLRUCache::SslSessionLRUCache(size_t capacity) : capacity_(capacity) {
   GPR_ASSERT(capacity > 0);
@@ -12,19 +37,18 @@ SslSessionLRUCache::~SslSessionLRUCache() {
   gpr_mu_destroy(&lock_);
 }
 
-void SslSessionLRUCache::Put(
-    const char* key, SSL_SESSION* session) {
+void SslSessionLRUCache::Put(const char* key, SslSessionPtr session) {
   grpc_slice key_slice = grpc_slice_from_copied_string(key);
   mu_guard guard(&lock_);
 
   SslSessionList::iterator it = FindLocked(key_slice);
   if (it != use_order_list_.end()) {
-    grpc_slice_unref(key);
-    it->SetSession(session);
+    grpc_slice_unref(key_slice);
+    it->SetSession(std::move(session));
     return;
   }
 
-  use_order_list_.emplace_front(key_slice, session);
+  use_order_list_.emplace_front(key_slice, std::move(session));
   auto emplace_result = entry_by_key_.emplace(
       key_slice, use_order_list_.begin());
   GPR_ASSERT(emplace_result.second);
@@ -33,14 +57,14 @@ void SslSessionLRUCache::Put(
     it = std::prev(use_order_list_.end());
     GPR_ASSERT(it != use_order_list_.end());
 
-    // Order matters, key is destroyed after removing element from list.
+    // Order matters, key is destroyed after removing element from the list.
     size_t removed_count = entry_by_key_.erase(it->Key());
     GPR_ASSERT(removed_count == 1);
-    use_order_list_.splice(use_order_list_.begin(), use_order_list_, it);
+    use_order_list_.erase(it);
   }
 }
 
-SSL_SESSION* SslSessionLRUCache::Get(const char* key) {
+SslSessionPtr SslSessionLRUCache::Get(const char* key) {
   // Key is only used for lookups.
   grpc_slice key_slice = grpc_slice_from_static_string(key);
   mu_guard guard(&lock_);
@@ -51,6 +75,13 @@ SSL_SESSION* SslSessionLRUCache::Get(const char* key) {
   }
 
   return it->GetSession();
+}
+
+size_t SslSessionLRUCache::Size() {
+  mu_guard guard(&lock_);
+
+  GPR_ASSERT(use_order_list_.size() == entry_by_key_.size());
+  return use_order_list_.size();
 }
 
 SslSessionLRUCache::SslSessionList::iterator SslSessionLRUCache::FindLocked(
@@ -64,7 +95,7 @@ SslSessionLRUCache::SslSessionList::iterator SslSessionLRUCache::FindLocked(
   if (it->second != use_order_list_.begin()) {
     use_order_list_.splice(use_order_list_.begin(), use_order_list_, it->second);
   }
-  GPR_ASSERT(grpc_slice_is_equivalent(it->first, it->second.Key()));
+  GPR_ASSERT(grpc_slice_is_equivalent(it->first, it->second->Key()));
 
   return it->second;
 }
@@ -105,15 +136,16 @@ int SslSessionLRUCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
     return 0;
   }
 
-  self->Put(server_name, session);
-  // Don't take ownership over session reference.
-  return 0;
+  self->Put(server_name, SslSessionPtr(session));
+  // Return 1 to indicate transfered ownership over the given session.
+  return 1;
 }
 
-void SslSessionLRUCache::InitContext(SSL_CTX* ssl_context) {
+void SslSessionLRUCache::InitContext(tsi_ssl_session_cache* cache, SSL_CTX* ssl_context) {
+  auto self = static_cast<SslSessionLRUCache*>(cache);
   // SSL_CTX will call Unref on destruction.
-  Ref();
-  SSL_CTX_set_ex_data(ssl_context, GetSslExIndex(), this);
+  self->Ref();
+  SSL_CTX_set_ex_data(ssl_context, GetSslExIndex(), self);
   SSL_CTX_sess_set_new_cb(ssl_context, SetNewCallback);
 }
 
@@ -128,11 +160,10 @@ void SslSessionLRUCache::ResumeSession(SSL* ssl) {
       return;
   }
 
-  SSL_SESSION* session = self->Get(server_name);
-  if (session != nullptr) {
-    SSL_set_session(ssl, session);
-    // SSL_get_session increments reference counter.
-    SSL_SESSION_free(session);
+  SslSessionPtr session = self->Get(server_name);
+  if (session) {
+    // SSL_set_session internally increments reference counter.
+    SSL_set_session(ssl, session.get());
   }
 }
 
