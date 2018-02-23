@@ -3231,19 +3231,6 @@ targets:
   corpus_dirs:
   - test/core/security/corpus/ssl_server_corpus
   maxlen: 2048
-- name: ssl_session_cache_test
-  build: test
-  language: c
-  src:
-  - test/core/tsi/ssl_session_cache_test.cc
-  deps:
-  - gpr_test_util
-  - gpr
-  - grpc
-  platforms:
-  - linux
-  - posix
-  - mac
 - name: ssl_transport_security_test
   build: test
   language: c

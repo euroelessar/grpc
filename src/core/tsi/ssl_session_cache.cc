@@ -19,6 +19,7 @@
 #include "src/core/tsi/ssl_session_cache.h"
 
 #include <grpc/support/log.h>
+#include <grpc/support/string_util.h>
 
 namespace grpc_core {
 
@@ -27,13 +28,84 @@ SslSessionPtr ssl_session_clone(const SslSessionPtr& other) {
   return SslSessionPtr(other.get());
 }
 
+static void cache_key_avl_destroy(void* key, void* unused) {
+}
+
+static void* cache_key_avl_copy(void* key, void* unused) {
+  return key;
+}
+
+static long cache_key_avl_compare(void* key1, void* key2, void* unused) {
+  return grpc_slice_cmp(*static_cast<grpc_slice*>(key1),
+                        *static_cast<grpc_slice*>(key2));
+}
+
+static void cache_value_avl_destroy(void* value, void* unused) {
+}
+
+static void* cache_value_avl_copy(void* value, void* unused) {
+  return value;
+}
+
+// AVL only stores pointers, ownership belonges to linked list.
+static const grpc_avl_vtable cache_avl_vtable = {
+  cache_key_avl_destroy, cache_key_avl_copy, cache_key_avl_compare,
+  cache_value_avl_destroy, cache_value_avl_copy,
+};
+
+class SslSessionLRUCache::Node {
+public:
+  Node(const grpc_slice& key, SslSessionPtr session)
+      : key_(key), session_(std::move(session)) {
+  }
+
+  ~Node() {
+    grpc_slice_unref(key_);
+  }
+
+  // Not copyable nor movable.
+  Node(const Node&) = delete;
+  Node& operator=(const Node&) = delete;
+
+  void* AvlKey() {
+    return &key_;
+  }
+
+  SslSessionPtr GetSession() const {
+    return ssl_session_clone(session_);
+  }
+
+  void SetSession(SslSessionPtr session) {
+    session_ = std::move(session);
+  }
+
+private:
+  friend class SslSessionLRUCache;
+
+  grpc_slice key_;
+  SslSessionPtr session_;
+
+  Node* next_ = nullptr;
+  Node* prev_ = nullptr;
+};
+
 SslSessionLRUCache::SslSessionLRUCache(size_t capacity) : capacity_(capacity) {
   GPR_ASSERT(capacity > 0);
   gpr_ref_init(&ref_, 1);
   gpr_mu_init(&lock_);
+
+  entry_by_key_ = grpc_avl_create(&cache_avl_vtable);
 }
 
 SslSessionLRUCache::~SslSessionLRUCache() {
+  Node* node = use_order_list_head_;
+  while (node) {
+    Node* next = node->next_;
+    Delete(node);
+    node = next;
+  }
+
+  grpc_avl_unref(entry_by_key_, nullptr);
   gpr_mu_destroy(&lock_);
 }
 
@@ -41,26 +113,25 @@ void SslSessionLRUCache::Put(const char* key, SslSessionPtr session) {
   grpc_slice key_slice = grpc_slice_from_copied_string(key);
   mu_guard guard(&lock_);
 
-  SslSessionList::iterator it = FindLocked(key_slice);
-  if (it != use_order_list_.end()) {
+  Node* node = FindLocked(key_slice);
+  if (node != nullptr) {
     grpc_slice_unref(key_slice);
-    it->SetSession(std::move(session));
+    node->SetSession(std::move(session));
     return;
   }
 
-  use_order_list_.emplace_front(key_slice, std::move(session));
-  auto emplace_result = entry_by_key_.emplace(
-      key_slice, use_order_list_.begin());
-  GPR_ASSERT(emplace_result.second);
+  node = New<Node>(key_slice, std::move(session));
+  PushFront(node);
+  entry_by_key_ = grpc_avl_add(entry_by_key_, node->AvlKey(), node, nullptr);
 
-  if (use_order_list_.size() > capacity_) {
-    it = std::prev(use_order_list_.end());
-    GPR_ASSERT(it != use_order_list_.end());
+  if (use_order_list_size_ > capacity_) {
+    GPR_ASSERT(use_order_list_tail_);
+    node = use_order_list_tail_;
+    Remove(node);
 
-    // Order matters, key is destroyed after removing element from the list.
-    size_t removed_count = entry_by_key_.erase(it->Key());
-    GPR_ASSERT(removed_count == 1);
-    use_order_list_.erase(it);
+    // Order matters, key is destroyed after deleting node.
+    entry_by_key_ = grpc_avl_remove(entry_by_key_, node->AvlKey(), nullptr);
+    Delete(node);
   }
 }
 
@@ -69,36 +140,90 @@ SslSessionPtr SslSessionLRUCache::Get(const char* key) {
   grpc_slice key_slice = grpc_slice_from_static_string(key);
   mu_guard guard(&lock_);
 
-  SslSessionList::iterator it = FindLocked(key_slice);
-  if (it == use_order_list_.end()) {
+  Node* node = FindLocked(key_slice);
+  if (node == nullptr) {
     return nullptr;
   }
 
-  return it->GetSession();
+  return node->GetSession();
 }
 
 size_t SslSessionLRUCache::Size() {
   mu_guard guard(&lock_);
-
-  GPR_ASSERT(use_order_list_.size() == entry_by_key_.size());
-  return use_order_list_.size();
+  return use_order_list_size_;
 }
 
-SslSessionLRUCache::SslSessionList::iterator SslSessionLRUCache::FindLocked(
+SslSessionLRUCache::Node* SslSessionLRUCache::FindLocked(
     const grpc_slice& key) {
-  auto it = entry_by_key_.find(key);
-  if (it == entry_by_key_.end()) {
-    return use_order_list_.end();
+  void* value = grpc_avl_get(
+      entry_by_key_, const_cast<grpc_slice *>(&key), nullptr);
+  if (value == nullptr) {
+    return nullptr;
   }
+
+  Node* node = static_cast<Node*>(value);
 
   // Move to the beginning.
-  if (it->second != use_order_list_.begin()) {
-    use_order_list_.splice(use_order_list_.begin(), use_order_list_, it->second);
-  }
-  GPR_ASSERT(grpc_slice_is_equivalent(it->first, it->second->Key()));
+  Remove(node);
+  PushFront(node);
 
-  return it->second;
+  return node;
 }
+
+void SslSessionLRUCache::Remove(SslSessionLRUCache::Node* node) {
+  if (node->prev_ == nullptr) {
+    use_order_list_head_ = node->next_;
+  } else {
+    node->prev_->next_ = node->next_;
+  }
+
+  if (node->next_ == nullptr) {
+    use_order_list_tail_ = node->prev_;
+  } else {
+    node->next_->prev_ = node->prev_;
+  }
+
+  GPR_ASSERT(use_order_list_size_ >= 1);
+  use_order_list_size_--;
+  AssertInvariants();
+}
+
+void SslSessionLRUCache::PushFront(SslSessionLRUCache::Node* node) {
+  if (use_order_list_head_ == nullptr) {
+    use_order_list_head_ = node;
+    use_order_list_tail_ = node;
+    node->next_ = nullptr;
+    node->prev_ = nullptr;
+  } else {
+    node->next_ = use_order_list_head_;
+    node->next_->prev_ = node;
+    use_order_list_head_ = node;
+    node->prev_ = nullptr;
+  }
+  use_order_list_size_++;
+  AssertInvariants();
+}
+
+#ifndef NDEBUG
+void SslSessionLRUCache::AssertInvariants() {
+  size_t size = 0;
+  Node* prev = nullptr;
+  Node* current = use_order_list_head_;
+  while (current != nullptr) {
+    size++;
+    GPR_ASSERT(current->prev_ == prev);
+
+    prev = current;
+    current = current->next_;
+  }
+
+  GPR_ASSERT(prev == use_order_list_tail_);
+  GPR_ASSERT(size == use_order_list_size_);
+}
+#else
+void SslSessionLRUCache::AssertInvariants() {
+}
+#endif
 
 int SslSessionLRUCache::SslExIndex = -1;
 

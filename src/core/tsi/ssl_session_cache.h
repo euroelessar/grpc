@@ -29,6 +29,7 @@ extern "C" {
 #include <openssl/ssl.h>
 }
 
+#include "src/core/lib/avl/avl.h"
 #include "src/core/lib/gprpp/memory.h"
 
 struct tsi_ssl_session_cache {};
@@ -109,9 +110,12 @@ public:
   static void ResumeSession(SSL* ssl);
 
 private:
-  typedef std::list<SslSession, Allocator<SslSession>> SslSessionList;
+  class Node;
 
-  SslSessionList::iterator FindLocked(const grpc_slice& key);
+  Node* FindLocked(const grpc_slice& key);
+  void Remove(Node* node);
+  void PushFront(Node* node);
+  void AssertInvariants();
 
   static int SslExIndex;
   static SslSessionLRUCache* GetSelf(SSL* ssl);
@@ -121,15 +125,11 @@ private:
   gpr_mu lock_;
   size_t capacity_;
 
-  std::list<SslSession, Allocator<SslSession>> use_order_list_;
+  Node* use_order_list_head_ = nullptr;
+  Node* use_order_list_tail_ = nullptr;
+  size_t use_order_list_size_ = 0;
   // Slice is owned by list.
-  std::unordered_map<
-      grpc_slice,
-      SslSessionList::iterator,
-      SliceHash,
-      SliceEqualTo,
-      Allocator<std::pair<const grpc_slice, SslSessionList::iterator>>>
-      entry_by_key_;
+  grpc_avl entry_by_key_;
 };
 
 } // namespace grpc_core
