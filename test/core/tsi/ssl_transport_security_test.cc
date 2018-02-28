@@ -134,7 +134,7 @@ static void ssl_test_setup_handshakers(tsi_test_fixture* fixture) {
                  key_cert_lib->root_cert, ssl_fixture->force_client_auth,
                  nullptr, (const char**)server_alpn_protocols,
                  num_server_alpn_protocols, ssl_fixture->session_ticket_key,
-                 ssl_fixture->session_ticket_key_size,
+                 ssl_fixture->session_ticket_key_size, true,
                  &ssl_fixture->server_handshaker_factory) == TSI_OK);
   /* Create server and client handshakers. */
   tsi_handshaker* client_handshaker = nullptr;
@@ -684,7 +684,7 @@ void test_tsi_ssl_server_handshaker_factory_refcounting() {
       load_file(SSL_TSI_TEST_CREDENTIALS_DIR, "server0.key");
 
   GPR_ASSERT(tsi_create_ssl_server_handshaker_factory(
-                 &cert_pair, 1, cert_chain, 0, nullptr, nullptr, 0, nullptr, 0,
+                 &cert_pair, 1, cert_chain, 0, nullptr, nullptr, 0, nullptr, 0, true,
                  &server_handshaker_factory) == TSI_OK);
 
   handshaker_factory_destructor_called = false;

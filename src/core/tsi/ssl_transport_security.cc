@@ -1464,13 +1464,14 @@ tsi_result tsi_create_ssl_server_handshaker_factory(
     int force_client_auth, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
     const char* session_ticket_key, size_t session_ticket_key_size,
+    bool disable_session_tickets,
     tsi_ssl_server_handshaker_factory** factory) {
   return tsi_create_ssl_server_handshaker_factory_ex(
       pem_key_cert_pairs, num_key_cert_pairs, pem_client_root_certs,
       force_client_auth ? TSI_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY
                         : TSI_DONT_REQUEST_CLIENT_CERTIFICATE,
       cipher_suites, alpn_protocols, num_alpn_protocols, session_ticket_key,
-      session_ticket_key_size, factory);
+      session_ticket_key_size, disable_session_tickets, factory);
 }
 
 tsi_result tsi_create_ssl_server_handshaker_factory_ex(
@@ -1479,6 +1480,7 @@ tsi_result tsi_create_ssl_server_handshaker_factory_ex(
     tsi_client_certificate_request_type client_certificate_request,
     const char* cipher_suites, const char** alpn_protocols,
     uint16_t num_alpn_protocols, const char* session_ticket_key,
+    bool disable_session_tickets,
     size_t session_ticket_key_size,
     tsi_ssl_server_handshaker_factory** factory) {
   tsi_ssl_server_handshaker_factory* impl = nullptr;
@@ -1531,23 +1533,27 @@ tsi_result tsi_create_ssl_server_handshaker_factory_ex(
                                     &pem_key_cert_pairs[i], cipher_suites);
       if (result != TSI_OK) break;
 
-      // Allow client cache sessions.
-      int set_sid_ctx_result = SSL_CTX_set_session_id_context(
-          impl->ssl_contexts[i], kSslSessionIdContext,
-          GPR_ARRAY_SIZE(kSslSessionIdContext));
-      if (set_sid_ctx_result == 0) {
-        gpr_log(GPR_ERROR, "Failed to set session id context.");
-        result = TSI_INTERNAL_ERROR;
-        break;
-      }
-
-      if (session_ticket_key != nullptr) {
-        if (SSL_CTX_set_tlsext_ticket_keys(
-                impl->ssl_contexts[i], const_cast<char*>(session_ticket_key),
-                session_ticket_key_size) == 0) {
-          gpr_log(GPR_ERROR, "Invalid STEK size.");
-          result = TSI_INVALID_ARGUMENT;
+      if (disable_session_tickets) {
+        SSL_CTX_set_options(impl->ssl_contexts[i], SSL_OP_NO_TICKET);
+      } else {
+        // Allow client cache sessions.
+        int set_sid_ctx_result = SSL_CTX_set_session_id_context(
+            impl->ssl_contexts[i], kSslSessionIdContext,
+            GPR_ARRAY_SIZE(kSslSessionIdContext));
+        if (set_sid_ctx_result == 0) {
+          gpr_log(GPR_ERROR, "Failed to set session id context.");
+          result = TSI_INTERNAL_ERROR;
           break;
+        }
+
+        if (session_ticket_key != nullptr) {
+          if (SSL_CTX_set_tlsext_ticket_keys(
+                  impl->ssl_contexts[i], const_cast<char*>(session_ticket_key),
+                  session_ticket_key_size) == 0) {
+            gpr_log(GPR_ERROR, "Invalid STEK size.");
+            result = TSI_INVALID_ARGUMENT;
+            break;
+          }
         }
       }
 

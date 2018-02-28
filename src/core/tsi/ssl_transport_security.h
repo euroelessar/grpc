@@ -135,7 +135,8 @@ typedef struct tsi_ssl_server_handshaker_factory
    - num_alpn_protocols is the number of alpn protocols and associated lengths
      specified. If this parameter is 0, the other alpn parameters must be NULL.
    - session_ticket_key is optional key for encrypting session keys. If paramter
-   is not specified it must be NULL.
+     is not specified it must be NULL.
+   - disable_session_tickets provides an ability to disable session tickets support.
    - factory is the address of the factory pointer to be created.
 
    - This method returns TSI_OK on success or TSI_INVALID_PARAMETER in the case
@@ -146,6 +147,7 @@ tsi_result tsi_create_ssl_server_handshaker_factory(
     int force_client_auth, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
     const char* session_ticket_key, size_t session_ticket_key_size,
+    bool disable_session_tickets,
     tsi_ssl_server_handshaker_factory** factory);
 
 /* Same as tsi_create_ssl_server_handshaker_factory method except uses
@@ -161,6 +163,7 @@ tsi_result tsi_create_ssl_server_handshaker_factory_ex(
     const char* cipher_suites, const char** alpn_protocols,
     uint16_t num_alpn_protocols, const char* session_ticket_key,
     size_t session_ticket_key_size,
+    bool disable_session_tickets,
     tsi_ssl_server_handshaker_factory** factory);
 
 /* Creates a server handshaker.
