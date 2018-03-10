@@ -47,7 +47,7 @@ static const grpc_avl_vtable cache_avl_vtable = {
 // BoringSSL and OpenSSL have different behavior regarding TLS ticket
 // resumption.
 //
-// BoringSSL allows SSL_SESSION outlive SSL and SSL_CTX objects which are
+// BoringSSL allows SSL_SESSION to outlive SSL and SSL_CTX objects which are
 // re-created by gRPC on every cert rotation/subchannel creation.
 // SSL_SESSION is also immutable in BoringSSL and it's safe to share
 // the same session between different threads and connections.
@@ -148,6 +148,29 @@ SslSessionLRUCache::~SslSessionLRUCache() {
   gpr_mu_destroy(&lock_);
 }
 
+size_t SslSessionLRUCache::Size() {
+  mu_guard guard(&lock_);
+  return use_order_list_size_;
+}
+
+SslSessionLRUCache::Node* SslSessionLRUCache::FindLocked(
+    const grpc_slice& key) {
+  void* value =
+      grpc_avl_get(entry_by_key_, const_cast<grpc_slice*>(&key), nullptr);
+  if (value == nullptr) {
+    return nullptr;
+  }
+
+  Node* node = static_cast<Node*>(value);
+
+  // Move to the beginning.
+  Remove(node);
+  PushFront(node);
+  AssertInvariants();
+
+  return node;
+}
+
 void SslSessionLRUCache::PutLocked(const char* key, SslSessionPtr session) {
   Node* node = FindLocked(grpc_slice_from_static_string(key));
   if (node != nullptr) {
@@ -182,29 +205,6 @@ SslSessionGetResult SslSessionLRUCache::GetLocked(const char* key) {
   }
 
   return node->GetSession();
-}
-
-size_t SslSessionLRUCache::Size() {
-  mu_guard guard(&lock_);
-  return use_order_list_size_;
-}
-
-SslSessionLRUCache::Node* SslSessionLRUCache::FindLocked(
-    const grpc_slice& key) {
-  void* value =
-      grpc_avl_get(entry_by_key_, const_cast<grpc_slice*>(&key), nullptr);
-  if (value == nullptr) {
-    return nullptr;
-  }
-
-  Node* node = static_cast<Node*>(value);
-
-  // Move to the beginning.
-  Remove(node);
-  PushFront(node);
-  AssertInvariants();
-
-  return node;
 }
 
 void SslSessionLRUCache::Remove(SslSessionLRUCache::Node* node) {

@@ -35,6 +35,8 @@ struct tsi_ssl_session_cache {};
 
 namespace grpc_core {
 
+class SslSessionCacheTest;
+
 struct SliceHash {
   uint32_t operator()(const grpc_slice& slice) const noexcept {
     return grpc_slice_hash(slice);
@@ -72,10 +74,6 @@ class SslSessionLRUCache : public tsi_ssl_session_cache {
     }
   }
 
-  // PutLocked and GetLocked interfaces are exposed for tests only.
-  void PutLocked(const char* key, SslSessionPtr session);
-  SslSessionGetResult GetLocked(const char* key);
-
   size_t Size();
 
   static void InitContext(tsi_ssl_session_cache* cache, SSL_CTX* ssl_context);
@@ -84,8 +82,11 @@ class SslSessionLRUCache : public tsi_ssl_session_cache {
 
  private:
   class Node;
+  friend class grpc_core::SslSessionCacheTest;
 
   Node* FindLocked(const grpc_slice& key);
+  void PutLocked(const char* key, SslSessionPtr session);
+  SslSessionGetResult GetLocked(const char* key);
   void Remove(Node* node);
   void PushFront(Node* node);
   void AssertInvariants();

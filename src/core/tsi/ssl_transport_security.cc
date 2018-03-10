@@ -119,7 +119,7 @@ static gpr_mu* openssl_mutexes = nullptr;
 static void openssl_locking_cb(int mode, int type, const char* file,
                                int line) GRPC_UNUSED;
 static unsigned long openssl_thread_id_cb(void) GRPC_UNUSED;
-static unsigned char kSslSessionIdContext[] = {'g', 'r', 'p', 'c'};
+static const unsigned char kSslSessionIdContext[] = {'g', 'r', 'p', 'c'};
 
 static void openssl_locking_cb(int mode, int type, const char* file, int line) {
   if (mode & CRYPTO_LOCK) {
