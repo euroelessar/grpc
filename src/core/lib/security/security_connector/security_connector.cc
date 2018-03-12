@@ -542,42 +542,29 @@ grpc_server_security_connector* grpc_fake_server_security_connector_create(
 
 /* --- Ssl implementation. --- */
 
-struct grpc_ssl_session_cache {
-  gpr_refcount ref;
-  tsi_ssl_session_cache* cache;
-};
-
 grpc_ssl_session_cache* grpc_ssl_session_cache_create_lru(size_t capacity) {
-  grpc_ssl_session_cache* cache =
-      static_cast<grpc_ssl_session_cache*>(gpr_zalloc(sizeof(*cache)));
-  if (capacity < 1) {
-    capacity = 64;
-  }
-
-  gpr_ref_init(&cache->ref, 1);
-  cache->cache = tsi_ssl_session_cache_create_lru(capacity);
-
-  return cache;
-}
-
-static void grpc_ssl_session_cache_ref(grpc_ssl_session_cache* cache) {
-  gpr_ref(&cache->ref);
+  grpc_core::SslSessionLRUCache* cache =
+      grpc_core::New<grpc_core::SslSessionLRUCache>(capacity);
+  return reinterpret_cast<grpc_ssl_session_cache*>(cache);
 }
 
 void grpc_ssl_session_cache_destroy(grpc_ssl_session_cache* cache) {
-  if (gpr_unref(&cache->ref)) {
-    tsi_ssl_session_cache_unref(cache->cache);
-    gpr_free(cache);
-  }
+  grpc_core::SslSessionLRUCache* tsi_cache =
+      reinterpret_cast<grpc_core::SslSessionLRUCache*>(cache);
+  tsi_cache->Unref();
 }
 
 static void* grpc_ssl_session_cache_arg_copy(void* p) {
-  grpc_ssl_session_cache_ref(static_cast<grpc_ssl_session_cache*>(p));
+  grpc_core::SslSessionLRUCache* cache =
+      reinterpret_cast<grpc_core::SslSessionLRUCache*>(p);
+  cache->Ref();
   return p;
 }
 
 static void grpc_ssl_session_cache_arg_destroy(void* p) {
-  grpc_ssl_session_cache_destroy(static_cast<grpc_ssl_session_cache*>(p));
+  grpc_core::SslSessionLRUCache* cache =
+      reinterpret_cast<grpc_core::SslSessionLRUCache*>(p);
+  cache->Unref();
 }
 
 static int grpc_ssl_session_cache_arg_cmp(void* p, void* q) {
@@ -1039,7 +1026,7 @@ grpc_security_status grpc_ssl_channel_security_connector_create(
     grpc_call_credentials* request_metadata_creds,
     const grpc_ssl_config* config, const char* target_name,
     const char* overridden_target_name,
-    grpc_ssl_session_cache* ssl_session_cache,
+    grpc_core::SslSessionLRUCache* ssl_session_cache,
     grpc_channel_security_connector** sc) {
   size_t num_alpn_protocols = 0;
   const char** alpn_protocol_strings =
@@ -1088,8 +1075,7 @@ grpc_security_status grpc_ssl_channel_security_connector_create(
   result = tsi_create_ssl_client_handshaker_factory(
       has_key_cert_pair ? config->pem_key_cert_pair : nullptr, pem_root_certs,
       ssl_cipher_suites(), alpn_protocol_strings,
-      static_cast<uint16_t>(num_alpn_protocols),
-      ssl_session_cache ? ssl_session_cache->cache : nullptr,
+      static_cast<uint16_t>(num_alpn_protocols), ssl_session_cache,
       &c->client_handshaker_factory);
   if (result != TSI_OK) {
     gpr_log(GPR_ERROR, "Handshaker factory creation failed with %s.",

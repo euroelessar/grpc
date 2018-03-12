@@ -21,6 +21,7 @@
 
 #include <grpc/support/port_platform.h>
 
+#include "src/core/tsi/ssl_session_cache.h"
 #include "src/core/tsi/transport_security_interface.h"
 
 /* Value for the TSI_CERTIFICATE_TYPE_PEER_PROPERTY property for X509 certs. */
@@ -35,14 +36,6 @@
 #define TSI_X509_PEM_CERT_PROPERTY "x509_pem_cert"
 
 #define TSI_SSL_ALPN_SELECTED_PROTOCOL "ssl_alpn_selected_protocol"
-
-/* --- tsi_ssl_session_cache object --- */
-
-typedef struct tsi_ssl_session_cache tsi_ssl_session_cache;
-
-tsi_ssl_session_cache* tsi_ssl_session_cache_create_lru(size_t capacity);
-void tsi_ssl_session_cache_ref(tsi_ssl_session_cache* cache);
-void tsi_ssl_session_cache_unref(tsi_ssl_session_cache* cache);
 
 /* --- tsi_ssl_client_handshaker_factory object ---
 
@@ -85,11 +78,10 @@ typedef struct {
 
    - This method returns TSI_OK on success or TSI_INVALID_PARAMETER in the case
      where a parameter is invalid.  */
-tsi_result tsi_create_ssl_client_handshaker_factory(
-    const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
+tsi_result tsi_create_ssl_client_handshaker_factory(const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
-    tsi_ssl_session_cache* ssl_session_cache,
+    grpc_core::SslSessionLRUCache* ssl_session_cache,
     tsi_ssl_client_handshaker_factory** factory);
 
 /* Creates a client handshaker.

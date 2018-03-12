@@ -55,7 +55,7 @@ static const grpc_avl_vtable cache_avl_vtable = {
 // OpenSSL invalidates SSL_SESSION on SSL destruction making it pointless
 // to cache sessions. The workaround is to serialize (relatively expensive)
 // session into binary blob and re-create it from blob on every handshake.
-void SslSessionMayBeDeleter::operator()(SSL_SESSION* session) {
+void SslSessionMaybeDeleter::operator()(SSL_SESSION* session) {
 #ifndef OPENSSL_IS_BORINGSSL
   SSL_SESSION_free(session);
 #endif
@@ -104,11 +104,9 @@ class SslSessionLRUCache::Node {
     int size = i2d_SSL_SESSION(session.get(), nullptr);
     GPR_ASSERT(size > 0);
     grpc_slice slice = grpc_slice_malloc(size_t(size));
-
     unsigned char* start = GRPC_SLICE_START_PTR(slice);
     int second_size = i2d_SSL_SESSION(session.get(), &start);
     GPR_ASSERT(size == second_size);
-
     grpc_slice_unref(session_);
     session_ = slice;
   }
@@ -132,7 +130,6 @@ SslSessionLRUCache::SslSessionLRUCache(size_t capacity) : capacity_(capacity) {
   GPR_ASSERT(capacity > 0);
   gpr_ref_init(&ref_, 1);
   gpr_mu_init(&lock_);
-
   entry_by_key_ = grpc_avl_create(&cache_avl_vtable);
 }
 
@@ -143,7 +140,6 @@ SslSessionLRUCache::~SslSessionLRUCache() {
     Delete(node);
     node = next;
   }
-
   grpc_avl_unref(entry_by_key_, nullptr);
   gpr_mu_destroy(&lock_);
 }
@@ -160,14 +156,11 @@ SslSessionLRUCache::Node* SslSessionLRUCache::FindLocked(
   if (value == nullptr) {
     return nullptr;
   }
-
   Node* node = static_cast<Node*>(value);
-
   // Move to the beginning.
   Remove(node);
   PushFront(node);
   AssertInvariants();
-
   return node;
 }
 
@@ -177,18 +170,15 @@ void SslSessionLRUCache::PutLocked(const char* key, SslSessionPtr session) {
     node->SetSession(std::move(session));
     return;
   }
-
   grpc_slice key_slice = grpc_slice_from_copied_string(key);
   node = New<Node>(key_slice, std::move(session));
   PushFront(node);
   entry_by_key_ = grpc_avl_add(entry_by_key_, node->AvlKey(), node, nullptr);
   AssertInvariants();
-
   if (use_order_list_size_ > capacity_) {
     GPR_ASSERT(use_order_list_tail_);
     node = use_order_list_tail_;
     Remove(node);
-
     // Order matters, key is destroyed after deleting node.
     entry_by_key_ = grpc_avl_remove(entry_by_key_, node->AvlKey(), nullptr);
     Delete(node);
@@ -203,7 +193,6 @@ SslSessionGetResult SslSessionLRUCache::GetLocked(const char* key) {
   if (node == nullptr) {
     return nullptr;
   }
-
   return node->GetSession();
 }
 
@@ -213,13 +202,11 @@ void SslSessionLRUCache::Remove(SslSessionLRUCache::Node* node) {
   } else {
     node->prev_->next_ = node->next_;
   }
-
   if (node->next_ == nullptr) {
     use_order_list_tail_ = node->prev_;
   } else {
     node->next_->prev_ = node->prev_;
   }
-
   GPR_ASSERT(use_order_list_size_ >= 1);
   use_order_list_size_--;
 }
@@ -244,7 +231,6 @@ static size_t calculate_tree_size(grpc_avl_node* node) {
   if (node == nullptr) {
     return 0;
   }
-
   return 1 + calculate_tree_size(node->left) + calculate_tree_size(node->right);
 }
 
@@ -255,14 +241,11 @@ void SslSessionLRUCache::AssertInvariants() {
   while (current != nullptr) {
     size++;
     GPR_ASSERT(current->prev_ == prev);
-
     void* node = grpc_avl_get(entry_by_key_, current->AvlKey(), nullptr);
     GPR_ASSERT(node == current);
-
     prev = current;
     current = current->next_;
   }
-
   GPR_ASSERT(prev == use_order_list_tail_);
   GPR_ASSERT(size == use_order_list_size_);
   GPR_ASSERT(calculate_tree_size(entry_by_key_.root) == use_order_list_size_);
@@ -290,7 +273,6 @@ SslSessionLRUCache* SslSessionLRUCache::GetSelf(SSL* ssl) {
   if (ssl_context == nullptr) {
     return nullptr;
   }
-
   return static_cast<SslSessionLRUCache*>(
       SSL_CTX_get_ex_data(ssl_context, SslExIndex));
 }
@@ -300,25 +282,20 @@ int SslSessionLRUCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
   if (self == nullptr) {
     return 0;
   }
-
   const char* server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
   if (server_name == nullptr) {
     return 0;
   }
-
   mu_guard guard(&self->lock_);
   self->PutLocked(server_name, SslSessionPtr(session));
   // Return 1 to indicate transfered ownership over the given session.
   return 1;
 }
 
-void SslSessionLRUCache::InitContext(tsi_ssl_session_cache* cache,
-                                     SSL_CTX* ssl_context) {
-  auto self = static_cast<SslSessionLRUCache*>(cache);
-  GPR_ASSERT(self);
+void SslSessionLRUCache::InitContext(SSL_CTX* ssl_context) {
   // SSL_CTX will call Unref on destruction.
-  self->Ref();
-  SSL_CTX_set_ex_data(ssl_context, SslExIndex, self);
+  Ref();
+  SSL_CTX_set_ex_data(ssl_context, SslExIndex, this);
   SSL_CTX_sess_set_new_cb(ssl_context, SetNewCallback);
   SSL_CTX_set_session_cache_mode(ssl_context, SSL_SESS_CACHE_CLIENT);
 }
@@ -328,12 +305,10 @@ void SslSessionLRUCache::ResumeSession(SSL* ssl) {
   if (self == nullptr) {
     return;
   }
-
   const char* server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
   if (server_name == nullptr) {
     return;
   }
-
   mu_guard guard(&self->lock_);
   SslSessionGetResult session = self->GetLocked(server_name);
   if (session != nullptr) {
@@ -343,20 +318,3 @@ void SslSessionLRUCache::ResumeSession(SSL* ssl) {
 }
 
 }  // namespace grpc_core
-
-tsi_ssl_session_cache* tsi_ssl_session_cache_create_lru(size_t capacity) {
-  return grpc_core::New<grpc_core::SslSessionLRUCache>(capacity);
-}
-
-static grpc_core::SslSessionLRUCache* tsi_ssl_session_cache_get_self(
-    tsi_ssl_session_cache* cache) {
-  return static_cast<grpc_core::SslSessionLRUCache*>(cache);
-}
-
-void tsi_ssl_session_cache_ref(tsi_ssl_session_cache* cache) {
-  tsi_ssl_session_cache_get_self(cache)->Ref();
-}
-
-void tsi_ssl_session_cache_unref(tsi_ssl_session_cache* cache) {
-  tsi_ssl_session_cache_get_self(cache)->Unref();
-}

@@ -76,7 +76,7 @@ typedef struct ssl_tsi_test_fixture {
   ssl_alpn_lib* alpn_lib;
   bool force_client_auth;
   char* server_name_indication;
-  tsi_ssl_session_cache* session_cache;
+  grpc_core::SslSessionLRUCache* session_cache;
   bool session_reused;
   const char* session_ticket_key;
   size_t session_ticket_key_size;
@@ -582,12 +582,12 @@ void ssl_tsi_test_do_round_trip_odd_buffer_size() {
 }
 
 void ssl_tsi_test_do_handshake_session_cache() {
-  tsi_ssl_session_cache* session_cache = tsi_ssl_session_cache_create_lru(16);
+  grpc_core::SslSessionLRUCache session_cache(16);
 
   char session_ticket_key[48];
 
   auto do_handshake = [&session_ticket_key,
-                       session_cache](bool session_reused) {
+                       &session_cache](bool session_reused) {
     tsi_test_fixture* fixture = ssl_tsi_test_fixture_create();
     ssl_tsi_test_fixture* ssl_fixture =
         reinterpret_cast<ssl_tsi_test_fixture*>(fixture);
@@ -595,7 +595,7 @@ void ssl_tsi_test_do_handshake_session_cache() {
         const_cast<char*>("waterzooi.test.google.be");
     ssl_fixture->session_ticket_key = session_ticket_key;
     ssl_fixture->session_ticket_key_size = 48;
-    ssl_fixture->session_cache = session_cache;
+    ssl_fixture->session_cache = &session_cache;
     ssl_fixture->session_reused = session_reused;
     tsi_test_do_round_trip(&ssl_fixture->base);
     tsi_test_fixture_destroy(fixture);
@@ -614,8 +614,6 @@ void ssl_tsi_test_do_handshake_session_cache() {
   memset(session_ticket_key, 'c', 48);
   do_handshake(false);
   do_handshake(true);
-
-  tsi_ssl_session_cache_unref(session_cache);
 }
 
 static const tsi_ssl_handshaker_factory_vtable* original_vtable;

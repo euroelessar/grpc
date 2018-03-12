@@ -1381,7 +1381,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
     const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
-    tsi_ssl_session_cache* ssl_session_cache,
+    grpc_core::SslSessionLRUCache* ssl_session_cache,
     tsi_ssl_client_handshaker_factory** factory) {
   SSL_CTX* ssl_context = nullptr;
   tsi_ssl_client_handshaker_factory* impl = nullptr;
@@ -1400,7 +1400,7 @@ tsi_result tsi_create_ssl_client_handshaker_factory(
   }
 
   if (ssl_session_cache) {
-    grpc_core::SslSessionLRUCache::InitContext(ssl_session_cache, ssl_context);
+    ssl_session_cache->InitContext(ssl_context);
   }
 
   impl = static_cast<tsi_ssl_client_handshaker_factory*>(

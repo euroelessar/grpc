@@ -31,23 +31,9 @@ extern "C" {
 #include "src/core/lib/avl/avl.h"
 #include "src/core/lib/gprpp/memory.h"
 
-struct tsi_ssl_session_cache {};
-
 namespace grpc_core {
 
 class SslSessionCacheTest;
-
-struct SliceHash {
-  uint32_t operator()(const grpc_slice& slice) const noexcept {
-    return grpc_slice_hash(slice);
-  }
-};
-
-struct SliceEqualTo {
-  bool operator()(const grpc_slice& a, const grpc_slice& b) const {
-    return grpc_slice_cmp(a, b) == 0;
-  }
-};
 
 struct SslSessionDeleter {
   void operator()(SSL_SESSION* session) { SSL_SESSION_free(session); }
@@ -55,16 +41,16 @@ struct SslSessionDeleter {
 
 typedef std::unique_ptr<SSL_SESSION, SslSessionDeleter> SslSessionPtr;
 
-struct SslSessionMayBeDeleter {
+struct SslSessionMaybeDeleter {
   void operator()(SSL_SESSION* session);
 };
 
-typedef std::unique_ptr<SSL_SESSION, SslSessionMayBeDeleter>
+typedef std::unique_ptr<SSL_SESSION, SslSessionMaybeDeleter>
     SslSessionGetResult;
 
-class SslSessionLRUCache : public tsi_ssl_session_cache {
+class SslSessionLRUCache {
  public:
-  SslSessionLRUCache(size_t capacity);
+  explicit SslSessionLRUCache(size_t capacity);
   ~SslSessionLRUCache();
 
   void Ref() { gpr_ref(&ref_); }
@@ -76,7 +62,7 @@ class SslSessionLRUCache : public tsi_ssl_session_cache {
 
   size_t Size();
 
-  static void InitContext(tsi_ssl_session_cache* cache, SSL_CTX* ssl_context);
+  void InitContext(SSL_CTX* ssl_context);
   static void InitSslExIndex();
   static void ResumeSession(SSL* ssl);
 
