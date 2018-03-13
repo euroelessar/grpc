@@ -572,13 +572,16 @@ static int grpc_ssl_session_cache_arg_cmp(void* p, void* q) {
   return GPR_ICMP(p, q);
 }
 
-const grpc_arg_pointer_vtable* grpc_ssl_session_cache_arg_vtable() {
+grpc_arg grpc_channel_arg_ssl_session_cache_create(
+    grpc_ssl_session_cache* cache) {
   static const grpc_arg_pointer_vtable vtable = {
       grpc_ssl_session_cache_arg_copy,
       grpc_ssl_session_cache_arg_destroy,
       grpc_ssl_session_cache_arg_cmp,
   };
-  return &vtable;
+
+  return grpc_channel_arg_pointer_create(
+    const_cast<char*>(GRPC_SSL_SESSION_CACHE_ARG), cache, &vtable);
 }
 
 typedef struct {

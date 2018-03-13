@@ -115,9 +115,9 @@ GRPCAPI grpc_ssl_session_cache* grpc_ssl_session_cache_create_lru(
 /** Destroy SSL session cache. */
 GRPCAPI void grpc_ssl_session_cache_destroy(grpc_ssl_session_cache* cache);
 
-/** Fetch a vtable for a grpc_channel_arg that points to a
-    grpc_ssl_session_cache.  */
-GRPCAPI const grpc_arg_pointer_vtable* grpc_ssl_session_cache_arg_vtable();
+/** Create a channel arg with the given cache object. */
+GRPCAPI grpc_arg grpc_channel_arg_ssl_session_cache_create(
+    grpc_ssl_session_cache* cache);
 
 /** --- grpc_channel_credentials object. ---
 

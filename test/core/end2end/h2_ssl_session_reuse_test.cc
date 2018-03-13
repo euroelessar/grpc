@@ -72,9 +72,7 @@ grpc_channel* client_create(char* server_addr, grpc_ssl_session_cache* cache) {
       grpc_channel_arg_string_create(
           const_cast<char*>(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG),
           const_cast<char*>("waterzooi.test.google.be")),
-      grpc_channel_arg_pointer_create(
-          const_cast<char*>(GRPC_SSL_SESSION_CACHE_ARG), cache,
-          grpc_ssl_session_cache_arg_vtable()),
+      grpc_channel_arg_ssl_session_cache_create(cache),
   };
 
   grpc_channel_args* client_args =
