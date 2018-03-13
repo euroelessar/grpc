@@ -34,7 +34,7 @@ public:
     cache->PutLocked(key, std::move(session));
   }
 
-  SslSessionGetResult GetLocked(SslSessionLRUCache* cache, const char* key) {
+  SslSessionPtr GetLocked(SslSessionLRUCache* cache, const char* key) {
     return cache->GetLocked(key);
   }
 };

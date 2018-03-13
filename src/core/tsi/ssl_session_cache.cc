@@ -20,6 +20,8 @@
 
 #include "src/core/tsi/ssl_session_cache.h"
 
+#include "src/core/tsi/ssl_session.h"
+
 #include <grpc/support/log.h>
 #include <grpc/support/string_util.h>
 
@@ -44,38 +46,12 @@ static const grpc_avl_vtable cache_avl_vtable = {
     cache_value_avl_destroy, cache_value_avl_copy,
 };
 
-// BoringSSL and OpenSSL have different behavior regarding TLS ticket
-// resumption.
-//
-// BoringSSL allows SSL_SESSION to outlive SSL and SSL_CTX objects which are
-// re-created by gRPC on every cert rotation/subchannel creation.
-// SSL_SESSION is also immutable in BoringSSL and it's safe to share
-// the same session between different threads and connections.
-//
-// OpenSSL invalidates SSL_SESSION on SSL destruction making it pointless
-// to cache sessions. The workaround is to serialize (relatively expensive)
-// session into binary blob and re-create it from blob on every handshake.
-void SslSessionMaybeDeleter::operator()(SSL_SESSION* session) {
-#ifndef OPENSSL_IS_BORINGSSL
-  SSL_SESSION_free(session);
-#endif
-}
-
 class SslSessionLRUCache::Node {
  public:
-  Node(const grpc_slice& key, SslSessionPtr session) : key_(key) {
-#ifndef OPENSSL_IS_BORINGSSL
-    session_ = grpc_empty_slice();
-#endif
-    SetSession(std::move(session));
-  }
+  Node(const grpc_slice& key, SslSessionPtr session)
+      : key_(key), session_(std::move(session)) {}
 
-  ~Node() {
-    grpc_slice_unref(key_);
-#ifndef OPENSSL_IS_BORINGSSL
-    grpc_slice_unref(session_);
-#endif
-  }
+  ~Node() { grpc_slice_unref(key_); }
 
   // Not copyable nor movable.
   Node(const Node&) = delete;
@@ -83,44 +59,17 @@ class SslSessionLRUCache::Node {
 
   void* AvlKey() { return &key_; }
 
-#ifdef OPENSSL_IS_BORINGSSL
-  SslSessionGetResult GetSession() const {
-    return SslSessionGetResult(session_.get());
-  }
-
-  void SetSession(SslSessionPtr session) { session_ = std::move(session); }
-#else
-  SslSessionGetResult GetSession() const {
-    const unsigned char* data = GRPC_SLICE_START_PTR(session_);
-    size_t length = GRPC_SLICE_LENGTH(session_);
-    SSL_SESSION* session = d2i_SSL_SESSION(nullptr, &data, length);
-    if (session == nullptr) {
-      return SslSessionGetResult();
-    }
-    return SslSessionGetResult(session);
-  }
+  SslSessionPtr GetSession() const { return session_.Get(); }
 
   void SetSession(SslSessionPtr session) {
-    int size = i2d_SSL_SESSION(session.get(), nullptr);
-    GPR_ASSERT(size > 0);
-    grpc_slice slice = grpc_slice_malloc(size_t(size));
-    unsigned char* start = GRPC_SLICE_START_PTR(slice);
-    int second_size = i2d_SSL_SESSION(session.get(), &start);
-    GPR_ASSERT(size == second_size);
-    grpc_slice_unref(session_);
-    session_ = slice;
+    session_ = SslCachedSession(std::move(session));
   }
-#endif
 
  private:
   friend class SslSessionLRUCache;
 
   grpc_slice key_;
-#ifdef OPENSSL_IS_BORINGSSL
-  SslSessionPtr session_;
-#else
-  grpc_slice session_;
-#endif
+  SslCachedSession session_;
 
   Node* next_ = nullptr;
   Node* prev_ = nullptr;
@@ -186,7 +135,7 @@ void SslSessionLRUCache::PutLocked(const char* key, SslSessionPtr session) {
   }
 }
 
-SslSessionGetResult SslSessionLRUCache::GetLocked(const char* key) {
+SslSessionPtr SslSessionLRUCache::GetLocked(const char* key) {
   // Key is only used for lookups.
   grpc_slice key_slice = grpc_slice_from_static_string(key);
   Node* node = FindLocked(key_slice);
@@ -310,7 +259,7 @@ void SslSessionLRUCache::ResumeSession(SSL* ssl) {
     return;
   }
   mu_guard guard(&self->lock_);
-  SslSessionGetResult session = self->GetLocked(server_name);
+  SslSessionPtr session = self->GetLocked(server_name);
   if (session != nullptr) {
     // SSL_set_session internally increments reference counter.
     SSL_set_session(ssl, session.get());

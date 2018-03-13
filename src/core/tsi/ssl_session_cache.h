@@ -30,28 +30,20 @@ extern "C" {
 
 #include "src/core/lib/avl/avl.h"
 #include "src/core/lib/gprpp/memory.h"
+#include "src/core/tsi/ssl_session.h"
 
 namespace grpc_core {
 
 class SslSessionCacheTest;
 
-struct SslSessionDeleter {
-  void operator()(SSL_SESSION* session) { SSL_SESSION_free(session); }
-};
-
-typedef std::unique_ptr<SSL_SESSION, SslSessionDeleter> SslSessionPtr;
-
-struct SslSessionMaybeDeleter {
-  void operator()(SSL_SESSION* session);
-};
-
-typedef std::unique_ptr<SSL_SESSION, SslSessionMaybeDeleter>
-    SslSessionGetResult;
-
 class SslSessionLRUCache {
  public:
   explicit SslSessionLRUCache(size_t capacity);
   ~SslSessionLRUCache();
+
+  // Not copyable nor movable.
+  SslSessionLRUCache(const SslSessionLRUCache&) = delete;
+  SslSessionLRUCache& operator=(const SslSessionLRUCache&) = delete;
 
   void Ref() { gpr_ref(&ref_); }
   void Unref() {
@@ -72,7 +64,7 @@ class SslSessionLRUCache {
 
   Node* FindLocked(const grpc_slice& key);
   void PutLocked(const char* key, SslSessionPtr session);
-  SslSessionGetResult GetLocked(const char* key);
+  SslSessionPtr GetLocked(const char* key);
   void Remove(Node* node);
   void PushFront(Node* node);
   void AssertInvariants();

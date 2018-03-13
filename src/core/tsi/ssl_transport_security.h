@@ -78,7 +78,8 @@ typedef struct {
 
    - This method returns TSI_OK on success or TSI_INVALID_PARAMETER in the case
      where a parameter is invalid.  */
-tsi_result tsi_create_ssl_client_handshaker_factory(const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
+tsi_result tsi_create_ssl_client_handshaker_factory(
+    const tsi_ssl_pem_key_cert_pair* pem_key_cert_pair,
     const char* pem_root_certs, const char* cipher_suites,
     const char** alpn_protocols, uint16_t num_alpn_protocols,
     grpc_core::SslSessionLRUCache* ssl_session_cache,
