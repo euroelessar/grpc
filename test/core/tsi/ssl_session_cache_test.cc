@@ -29,8 +29,9 @@
 namespace grpc_core {
 
 class SslSessionCacheTest : public ::testing::Test {
-public:
-  void PutLocked(SslSessionLRUCache* cache, const char* key, SslSessionPtr session) {
+ public:
+  void PutLocked(SslSessionLRUCache* cache, const char* key,
+                 SslSessionPtr session) {
     cache->PutLocked(key, std::move(session));
   }
 

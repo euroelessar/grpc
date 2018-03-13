@@ -148,7 +148,6 @@ static void init_openssl(void) {
   }
   CRYPTO_set_locking_callback(openssl_locking_cb);
   CRYPTO_set_id_callback(openssl_thread_id_cb);
-  grpc_core::SslSessionLRUCache::InitSslExIndex();
 }
 
 /* --- Ssl utils. ---*/

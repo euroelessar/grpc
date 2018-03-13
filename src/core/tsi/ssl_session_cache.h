@@ -37,7 +37,7 @@ namespace grpc_core {
 
 class SslSessionCacheTest;
 
-class SslSessionLRUCache: public RefCounted<SslSessionLRUCache> {
+class SslSessionLRUCache : public RefCounted<SslSessionLRUCache> {
  public:
   explicit SslSessionLRUCache(size_t capacity);
   ~SslSessionLRUCache();
@@ -49,7 +49,6 @@ class SslSessionLRUCache: public RefCounted<SslSessionLRUCache> {
   size_t Size();
 
   void InitContext(SSL_CTX* ssl_context);
-  static void InitSslExIndex();
   static void ResumeSession(SSL* ssl);
 
  private:
@@ -63,7 +62,6 @@ class SslSessionLRUCache: public RefCounted<SslSessionLRUCache> {
   void PushFront(Node* node);
   void AssertInvariants();
 
-  static int SslExIndex;
   static SslSessionLRUCache* GetSelf(SSL* ssl);
   static int SetNewCallback(SSL* ssl, SSL_SESSION* session);
 

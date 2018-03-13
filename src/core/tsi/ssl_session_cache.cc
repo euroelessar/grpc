@@ -27,6 +27,24 @@
 
 namespace grpc_core {
 
+static gpr_once init_ssl_cache_once = GPR_ONCE_INIT;
+static int ssl_ex_index = -1;
+
+static int get_ssl_ex_index() {
+  gpr_once_init(&init_ssl_cache_once, []() {
+    ssl_ex_index = SSL_CTX_get_ex_new_index(
+        0, nullptr, nullptr, nullptr,
+        [](void* parent, void* ptr, CRYPTO_EX_DATA* ad, int index, long argl,
+           void* argp) {
+          if (ptr != nullptr) {
+            static_cast<SslSessionLRUCache*>(ptr)->Unref();
+          }
+        });
+    GPR_ASSERT(ssl_ex_index != -1);
+  });
+  return ssl_ex_index;
+}
+
 static void cache_key_avl_destroy(void* key, void* unused) {}
 
 static void* cache_key_avl_copy(void* key, void* unused) { return key; }
@@ -202,27 +220,13 @@ void SslSessionLRUCache::AssertInvariants() {
 void SslSessionLRUCache::AssertInvariants() {}
 #endif
 
-int SslSessionLRUCache::SslExIndex = -1;
-
-void SslSessionLRUCache::InitSslExIndex() {
-  SslExIndex = SSL_CTX_get_ex_new_index(
-      0, nullptr, nullptr, nullptr,
-      [](void* parent, void* ptr, CRYPTO_EX_DATA* ad, int index, long argl,
-         void* argp) {
-        if (ptr != nullptr) {
-          static_cast<SslSessionLRUCache*>(ptr)->Unref();
-        }
-      });
-  GPR_ASSERT(SslExIndex != -1);
-}
-
 SslSessionLRUCache* SslSessionLRUCache::GetSelf(SSL* ssl) {
   SSL_CTX* ssl_context = SSL_get_SSL_CTX(ssl);
   if (ssl_context == nullptr) {
     return nullptr;
   }
   return static_cast<SslSessionLRUCache*>(
-      SSL_CTX_get_ex_data(ssl_context, SslExIndex));
+      SSL_CTX_get_ex_data(ssl_context, get_ssl_ex_index()));
 }
 
 int SslSessionLRUCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
@@ -243,7 +247,7 @@ int SslSessionLRUCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
 void SslSessionLRUCache::InitContext(SSL_CTX* ssl_context) {
   // SSL_CTX will call Unref on destruction.
   Ref().release();
-  SSL_CTX_set_ex_data(ssl_context, SslExIndex, this);
+  SSL_CTX_set_ex_data(ssl_context, get_ssl_ex_index(), this);
   SSL_CTX_sess_set_new_cb(ssl_context, SetNewCallback);
   SSL_CTX_set_session_cache_mode(ssl_context, SSL_SESS_CACHE_CLIENT);
 }
