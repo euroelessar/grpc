@@ -35,8 +35,6 @@ extern "C" {
 
 namespace grpc_core {
 
-class SslSessionCacheTest;
-
 class SslSessionLRUCache : public RefCounted<SslSessionLRUCache> {
  public:
   explicit SslSessionLRUCache(size_t capacity);
@@ -47,23 +45,19 @@ class SslSessionLRUCache : public RefCounted<SslSessionLRUCache> {
   SslSessionLRUCache& operator=(const SslSessionLRUCache&) = delete;
 
   size_t Size();
+  void Put(const char* key, SslSessionPtr session);
+  SslSessionPtr Get(const char* key);
 
   void InitContext(SSL_CTX* ssl_context);
   static void ResumeSession(SSL* ssl);
 
  private:
   class Node;
-  friend class grpc_core::SslSessionCacheTest;
 
   Node* FindLocked(const grpc_slice& key);
-  void PutLocked(const char* key, SslSessionPtr session);
-  SslSessionPtr GetLocked(const char* key);
   void Remove(Node* node);
   void PushFront(Node* node);
   void AssertInvariants();
-
-  static SslSessionLRUCache* GetSelf(SSL* ssl);
-  static int SetNewCallback(SSL* ssl, SSL_SESSION* session);
 
   gpr_mu lock_;
   size_t capacity_;

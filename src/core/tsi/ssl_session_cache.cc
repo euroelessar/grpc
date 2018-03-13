@@ -27,24 +27,6 @@
 
 namespace grpc_core {
 
-static gpr_once init_ssl_cache_once = GPR_ONCE_INIT;
-static int ssl_ex_index = -1;
-
-static int get_ssl_ex_index() {
-  gpr_once_init(&init_ssl_cache_once, []() {
-    ssl_ex_index = SSL_CTX_get_ex_new_index(
-        0, nullptr, nullptr, nullptr,
-        [](void* parent, void* ptr, CRYPTO_EX_DATA* ad, int index, long argl,
-           void* argp) {
-          if (ptr != nullptr) {
-            static_cast<SslSessionLRUCache*>(ptr)->Unref();
-          }
-        });
-    GPR_ASSERT(ssl_ex_index != -1);
-  });
-  return ssl_ex_index;
-}
-
 static void cache_key_avl_destroy(void* key, void* unused) {}
 
 static void* cache_key_avl_copy(void* key, void* unused) { return key; }
@@ -130,7 +112,8 @@ SslSessionLRUCache::Node* SslSessionLRUCache::FindLocked(
   return node;
 }
 
-void SslSessionLRUCache::PutLocked(const char* key, SslSessionPtr session) {
+void SslSessionLRUCache::Put(const char* key, SslSessionPtr session) {
+  mu_guard guard(&lock_);
   Node* node = FindLocked(grpc_slice_from_static_string(key));
   if (node != nullptr) {
     node->SetSession(std::move(session));
@@ -152,7 +135,8 @@ void SslSessionLRUCache::PutLocked(const char* key, SslSessionPtr session) {
   }
 }
 
-SslSessionPtr SslSessionLRUCache::GetLocked(const char* key) {
+SslSessionPtr SslSessionLRUCache::Get(const char* key) {
+  mu_guard guard(&lock_);
   // Key is only used for lookups.
   grpc_slice key_slice = grpc_slice_from_static_string(key);
   Node* node = FindLocked(key_slice);
@@ -219,54 +203,5 @@ void SslSessionLRUCache::AssertInvariants() {
 #else
 void SslSessionLRUCache::AssertInvariants() {}
 #endif
-
-SslSessionLRUCache* SslSessionLRUCache::GetSelf(SSL* ssl) {
-  SSL_CTX* ssl_context = SSL_get_SSL_CTX(ssl);
-  if (ssl_context == nullptr) {
-    return nullptr;
-  }
-  return static_cast<SslSessionLRUCache*>(
-      SSL_CTX_get_ex_data(ssl_context, get_ssl_ex_index()));
-}
-
-int SslSessionLRUCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
-  SslSessionLRUCache* self = GetSelf(ssl);
-  if (self == nullptr) {
-    return 0;
-  }
-  const char* server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
-  if (server_name == nullptr) {
-    return 0;
-  }
-  mu_guard guard(&self->lock_);
-  self->PutLocked(server_name, SslSessionPtr(session));
-  // Return 1 to indicate transfered ownership over the given session.
-  return 1;
-}
-
-void SslSessionLRUCache::InitContext(SSL_CTX* ssl_context) {
-  // SSL_CTX will call Unref on destruction.
-  Ref().release();
-  SSL_CTX_set_ex_data(ssl_context, get_ssl_ex_index(), this);
-  SSL_CTX_sess_set_new_cb(ssl_context, SetNewCallback);
-  SSL_CTX_set_session_cache_mode(ssl_context, SSL_SESS_CACHE_CLIENT);
-}
-
-void SslSessionLRUCache::ResumeSession(SSL* ssl) {
-  SslSessionLRUCache* self = GetSelf(ssl);
-  if (self == nullptr) {
-    return;
-  }
-  const char* server_name = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
-  if (server_name == nullptr) {
-    return;
-  }
-  mu_guard guard(&self->lock_);
-  SslSessionPtr session = self->GetLocked(server_name);
-  if (session != nullptr) {
-    // SSL_set_session internally increments reference counter.
-    SSL_set_session(ssl, session.get());
-  }
-}
 
 }  // namespace grpc_core

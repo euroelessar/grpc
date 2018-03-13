@@ -28,18 +28,6 @@
 
 namespace grpc_core {
 
-class SslSessionCacheTest : public ::testing::Test {
- public:
-  void PutLocked(SslSessionLRUCache* cache, const char* key,
-                 SslSessionPtr session) {
-    cache->PutLocked(key, std::move(session));
-  }
-
-  SslSessionPtr GetLocked(SslSessionLRUCache* cache, const char* key) {
-    return cache->GetLocked(key);
-  }
-};
-
 namespace {
 
 class SessionTracker;
@@ -95,6 +83,8 @@ class SessionTracker {
   std::unordered_set<long> alive_sessions_;
 };
 
+class SslSessionCacheTest : public ::testing::Test {};
+
 TEST_F(SslSessionCacheTest, InitialState) {
   SessionTracker tracker;
   // Verify session initial state.
@@ -114,34 +104,34 @@ TEST_F(SslSessionCacheTest, LruCache) {
     SslSessionLRUCache cache(3);
     SslSessionPtr sess2 = tracker.NewSession(2);
     SSL_SESSION* sess2_ptr = sess2.get();
-    PutLocked(&cache, "first.dropbox.com", std::move(sess2));
-    EXPECT_EQ(GetLocked(&cache, "first.dropbox.com").get(), sess2_ptr);
+    cache.Put("first.dropbox.com", std::move(sess2));
+    EXPECT_EQ(cache.Get("first.dropbox.com").get(), sess2_ptr);
     EXPECT_TRUE(tracker.IsAlive(2));
     EXPECT_EQ(tracker.AliveCount(), 1);
     // Putting element with the same key destroys old session.
     SslSessionPtr sess3 = tracker.NewSession(3);
     SSL_SESSION* sess3_ptr = sess3.get();
-    PutLocked(&cache, "first.dropbox.com", std::move(sess3));
+    cache.Put("first.dropbox.com", std::move(sess3));
     EXPECT_FALSE(tracker.IsAlive(2));
-    EXPECT_EQ(GetLocked(&cache, "first.dropbox.com").get(), sess3_ptr);
+    EXPECT_EQ(cache.Get("first.dropbox.com").get(), sess3_ptr);
     EXPECT_TRUE(tracker.IsAlive(3));
     EXPECT_EQ(tracker.AliveCount(), 1);
     // Putting three more elements discards current one.
     for (long id = 4; id < 7; id++) {
       EXPECT_TRUE(tracker.IsAlive(3));
       std::string domain = std::to_string(id) + ".random.domain";
-      PutLocked(&cache, domain.c_str(), tracker.NewSession(id));
+      cache.Put(domain.c_str(), tracker.NewSession(id));
     }
     EXPECT_EQ(cache.Size(), 3);
     EXPECT_FALSE(tracker.IsAlive(3));
     EXPECT_EQ(tracker.AliveCount(), 3);
     // Accessing element moves it into front of the queue.
-    EXPECT_TRUE(GetLocked(&cache, "4.random.domain"));
+    EXPECT_TRUE(cache.Get("4.random.domain"));
     EXPECT_TRUE(tracker.IsAlive(4));
     EXPECT_TRUE(tracker.IsAlive(5));
     EXPECT_TRUE(tracker.IsAlive(6));
     // One element has to be evicted from cache.
-    PutLocked(&cache, "7.random.domain", tracker.NewSession(7));
+    cache.Put("7.random.domain", tracker.NewSession(7));
     EXPECT_TRUE(tracker.IsAlive(4));
     EXPECT_FALSE(tracker.IsAlive(5));
     EXPECT_TRUE(tracker.IsAlive(6));

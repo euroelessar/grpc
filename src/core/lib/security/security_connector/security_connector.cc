@@ -581,7 +581,7 @@ grpc_arg grpc_channel_arg_ssl_session_cache_create(
   };
 
   return grpc_channel_arg_pointer_create(
-    const_cast<char*>(GRPC_SSL_SESSION_CACHE_ARG), cache, &vtable);
+      const_cast<char*>(GRPC_SSL_SESSION_CACHE_ARG), cache, &vtable);
 }
 
 typedef struct {
