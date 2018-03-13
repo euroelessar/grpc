@@ -29,6 +29,20 @@ extern "C" {
 
 #include "src/core/lib/gprpp/memory.h"
 
+/// Cached SSL session.
+///
+/// BoringSSL and OpenSSL have different behavior regarding TLS ticket
+/// resumption.
+///
+/// BoringSSL allows SSL_SESSION to outlive SSL and SSL_CTX objects which are
+/// re-created by gRPC on every cert rotation/subchannel creation.
+/// SSL_SESSION is also immutable in BoringSSL and it's safe to share
+/// the same session between different threads and connections.
+///
+/// OpenSSL invalidates SSL_SESSION on SSL destruction making it pointless
+/// to cache sessions. The workaround is to serialize (relatively expensive)
+/// session into binary blob and re-create it from blob on every handshake.
+
 namespace grpc_core {
 
 struct SslSessionDeleter {
@@ -37,27 +51,16 @@ struct SslSessionDeleter {
 
 typedef std::unique_ptr<SSL_SESSION, SslSessionDeleter> SslSessionPtr;
 
-// BoringSSL and OpenSSL have different behavior regarding TLS ticket
-// resumption.
-//
-// BoringSSL allows SSL_SESSION to outlive SSL and SSL_CTX objects which are
-// re-created by gRPC on every cert rotation/subchannel creation.
-// SSL_SESSION is also immutable in BoringSSL and it's safe to share
-// the same session between different threads and connections.
-//
-// OpenSSL invalidates SSL_SESSION on SSL destruction making it pointless
-// to cache sessions. The workaround is to serialize (relatively expensive)
-// session into binary blob and re-create it from blob on every handshake.
-
-// Instance of cached SSL session.
 class SslCachedSession {
  public:
+  /// Create cached representation of \a session.
   explicit SslCachedSession(SslSessionPtr session);
   SslCachedSession(SslCachedSession&& other);
   ~SslCachedSession();
 
   SslCachedSession& operator=(SslCachedSession&& other);
 
+  /// Return previously cached session.
   SslSessionPtr Get() const;
 
  private:
