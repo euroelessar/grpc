@@ -33,10 +33,20 @@ extern "C" {
 #include "src/core/lib/gprpp/ref_counted.h"
 #include "src/core/tsi/ssl_session.h"
 
+/// Cache for SSL sessions for sessions resumption.
+///
+/// Older sessions may be evicted from the cache using LRU policy if capacity
+/// limit is hit. All sessions are accosiated with some key, usually server
+/// name. Note that servers are required to share session ticket encryption keys
+/// in order for cache to be effective.
+///
+/// This class is thread safe.
+
 namespace grpc_core {
 
 class SslSessionLRUCache : public RefCounted<SslSessionLRUCache> {
  public:
+  /// Create new LRU cache with the given capacity.
   explicit SslSessionLRUCache(size_t capacity);
   ~SslSessionLRUCache();
 
@@ -44,12 +54,14 @@ class SslSessionLRUCache : public RefCounted<SslSessionLRUCache> {
   SslSessionLRUCache(const SslSessionLRUCache&) = delete;
   SslSessionLRUCache& operator=(const SslSessionLRUCache&) = delete;
 
+  /// Returns current number of sessions in the cache.
   size_t Size();
+  /// Add \a session in the cache using \a key. This operation may discard older
+  /// sessions.
   void Put(const char* key, SslSessionPtr session);
+  /// Returns the session from the cache accosiated with \a key or null if not
+  /// found.
   SslSessionPtr Get(const char* key);
-
-  void InitContext(SSL_CTX* ssl_context);
-  static void ResumeSession(SSL* ssl);
 
  private:
   class Node;
@@ -65,7 +77,6 @@ class SslSessionLRUCache : public RefCounted<SslSessionLRUCache> {
   Node* use_order_list_head_ = nullptr;
   Node* use_order_list_tail_ = nullptr;
   size_t use_order_list_size_ = 0;
-  // Slice is owned by list.
   grpc_avl entry_by_key_;
 };
 

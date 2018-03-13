@@ -40,7 +40,7 @@ static void cache_value_avl_destroy(void* value, void* unused) {}
 
 static void* cache_value_avl_copy(void* value, void* unused) { return value; }
 
-// AVL only stores pointers, ownership belonges to linked list.
+// AVL only stores pointers, ownership belonges to the linked list.
 static const grpc_avl_vtable cache_avl_vtable = {
     cache_key_avl_destroy,   cache_key_avl_copy,   cache_key_avl_compare,
     cache_value_avl_destroy, cache_value_avl_copy,
