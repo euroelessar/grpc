@@ -557,7 +557,8 @@ void grpc_ssl_session_cache_destroy(grpc_ssl_session_cache* cache) {
 static void* grpc_ssl_session_cache_arg_copy(void* p) {
   grpc_core::SslSessionLRUCache* cache =
       reinterpret_cast<grpc_core::SslSessionLRUCache*>(p);
-  cache->Ref();
+  // destroy call below will unref the pointer.
+  cache->Ref().release();
   return p;
 }
 

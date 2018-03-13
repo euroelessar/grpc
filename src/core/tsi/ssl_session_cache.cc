@@ -77,7 +77,6 @@ class SslSessionLRUCache::Node {
 
 SslSessionLRUCache::SslSessionLRUCache(size_t capacity) : capacity_(capacity) {
   GPR_ASSERT(capacity > 0);
-  gpr_ref_init(&ref_, 1);
   gpr_mu_init(&lock_);
   entry_by_key_ = grpc_avl_create(&cache_avl_vtable);
 }
@@ -243,7 +242,7 @@ int SslSessionLRUCache::SetNewCallback(SSL* ssl, SSL_SESSION* session) {
 
 void SslSessionLRUCache::InitContext(SSL_CTX* ssl_context) {
   // SSL_CTX will call Unref on destruction.
-  Ref();
+  Ref().release();
   SSL_CTX_set_ex_data(ssl_context, SslExIndex, this);
   SSL_CTX_sess_set_new_cb(ssl_context, SetNewCallback);
   SSL_CTX_set_session_cache_mode(ssl_context, SSL_SESS_CACHE_CLIENT);

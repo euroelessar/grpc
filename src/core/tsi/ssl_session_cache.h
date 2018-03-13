@@ -30,13 +30,14 @@ extern "C" {
 
 #include "src/core/lib/avl/avl.h"
 #include "src/core/lib/gprpp/memory.h"
+#include "src/core/lib/gprpp/ref_counted.h"
 #include "src/core/tsi/ssl_session.h"
 
 namespace grpc_core {
 
 class SslSessionCacheTest;
 
-class SslSessionLRUCache {
+class SslSessionLRUCache: public RefCounted<SslSessionLRUCache> {
  public:
   explicit SslSessionLRUCache(size_t capacity);
   ~SslSessionLRUCache();
@@ -44,13 +45,6 @@ class SslSessionLRUCache {
   // Not copyable nor movable.
   SslSessionLRUCache(const SslSessionLRUCache&) = delete;
   SslSessionLRUCache& operator=(const SslSessionLRUCache&) = delete;
-
-  void Ref() { gpr_ref(&ref_); }
-  void Unref() {
-    if (gpr_unref(&ref_)) {
-      Delete(this);
-    }
-  }
 
   size_t Size();
 
@@ -73,7 +67,6 @@ class SslSessionLRUCache {
   static SslSessionLRUCache* GetSelf(SSL* ssl);
   static int SetNewCallback(SSL* ssl, SSL_SESSION* session);
 
-  gpr_refcount ref_;
   gpr_mu lock_;
   size_t capacity_;
 
