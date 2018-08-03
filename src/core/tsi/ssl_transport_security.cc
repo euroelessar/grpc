@@ -33,6 +33,7 @@
 #include <sys/socket.h>
 #endif
 
+#include <grpc/slice_buffer.h>
 #include <grpc/support/alloc.h>
 #include <grpc/support/log.h>
 #include <grpc/support/sync.h>
@@ -49,12 +50,14 @@ extern "C" {
 
 #include "src/core/tsi/ssl_types.h"
 #include "src/core/tsi/transport_security.h"
+#include "src/core/tsi/transport_security_grpc.h"
 
 /* --- Constants. ---*/
 
 #define TSI_SSL_MAX_PROTECTED_FRAME_SIZE_UPPER_BOUND 16384
 #define TSI_SSL_MAX_PROTECTED_FRAME_SIZE_LOWER_BOUND 1024
 #define TSI_SSL_HANDSHAKER_INITIAL_BUFFER_SIZE 256
+#define TSI_SSL_STAGING_BUFFER_SIZE 8192
 
 /* Putting a macro like this and littering the source file with #if is really
    bad practice.
@@ -93,11 +96,20 @@ struct tsi_ssl_server_handshaker_factory {
   size_t alpn_protocol_list_length;
 };
 
+struct tsi_ssl_bio {
+  grpc_slice_buffer data;
+};
+
 struct tsi_ssl_connection {
   gpr_refcount ref;
 
   SSL* ssl;
   BIO* network_io;
+
+  BIO* protect_bio;
+  BIO* unprotect_bio;
+  tsi_ssl_bio protect_sb;
+  tsi_ssl_bio unprotect_sb;
 };
 
 typedef struct {
@@ -115,6 +127,12 @@ typedef struct {
   unsigned char* unused_bytes;
   size_t unused_bytes_size;
 } ssl_handshaker_result;
+
+struct tsi_ssl_zero_copy_frame_protector {
+  tsi_zero_copy_grpc_protector base;
+  tsi_ssl_connection *conn;
+  grpc_slice protect_staging_sb;
+};
 
 typedef struct {
   tsi_frame_protector base;
@@ -736,6 +754,97 @@ static int NullVerifyCallback(int preverify_ok, X509_STORE_CTX* ctx) {
   return 1;
 }
 
+/* --- tsi_bio methods implementation. --- */
+
+static int ssl_bio_reader_read(BIO* bio, char* data, int size) {
+  BIO_clear_retry_flags(bio);
+  GPR_ASSERT(bio->ptr);
+  tsi_ssl_bio* impl = static_cast<tsi_ssl_bio*>(bio->ptr);
+
+//  gpr_log(GPR_INFO, "tsi_bio_read, bio: %p, size: %d (of %zu)", impl, size, impl->data.length);
+
+  if (size <= 0) {
+    return 0;
+  }
+
+  size_t actual_size = static_cast<size_t>(size);
+  if (impl->data.length < actual_size) {
+    actual_size = impl->data.length;
+  }
+
+  if (actual_size == 0) {
+    BIO_set_retry_read(bio); // buffer is empty
+    return -1;
+  }
+
+  grpc_slice_buffer_move_first_into_buffer(&impl->data, actual_size, data);
+  return static_cast<int>(actual_size);
+}
+
+static long ssl_bio_reader_ctrl(BIO* bio, int cmd, long num, void* ptr) {
+  switch (cmd) {
+    case BIO_CTRL_FLUSH:
+      // The SSL stack requires BIOs handle BIO_flush.
+      return 1;
+  }
+
+  gpr_log(GPR_ERROR, "ssl_bio_reader_ctrl: unknown cmd: %d", cmd);
+  return 0;
+}
+
+static const BIO_METHOD ssl_bio_reader_vtable = {
+  0, /* type */
+  nullptr, /* name */
+  nullptr, /* bwrite */
+  ssl_bio_reader_read,
+  nullptr, /* bputs */
+  nullptr, /* bgets */
+  ssl_bio_reader_ctrl,
+  nullptr, /* create */
+  nullptr, /* destroy */
+  nullptr, /* callback_ctrl */
+};
+
+static int ssl_bio_writer_write(BIO* bio, const char* data, int size) {
+  BIO_clear_retry_flags(bio);
+  GPR_ASSERT(bio->ptr);
+  tsi_ssl_bio* impl = static_cast<tsi_ssl_bio*>(bio->ptr);
+
+//  gpr_log(GPR_INFO, "tsi_bio_write, bio: %p, size: %d", impl, size);
+
+  if (size <= 0) {
+    return 0;
+  }
+
+  grpc_slice slice = grpc_slice_from_copied_buffer(data, static_cast<size_t>(size));
+  grpc_slice_buffer_add(&impl->data, slice);
+  return size;
+}
+
+static long ssl_bio_writer_ctrl(BIO* bio, int cmd, long num, void* ptr) {
+  switch (cmd) {
+    case BIO_CTRL_FLUSH:
+      // The SSL stack requires BIOs handle BIO_flush.
+      return 1;
+  }
+
+  gpr_log(GPR_ERROR, "ssl_bio_writer_ctrl: unknown cmd: %d", cmd);
+  return 0;
+}
+
+static const BIO_METHOD ssl_bio_writer_vtable = {
+  0, /* type */
+  nullptr, /* name */
+  ssl_bio_writer_write,
+  nullptr, /* bread */
+  nullptr, /* bputs */
+  nullptr, /* bgets */
+  ssl_bio_writer_ctrl,
+  nullptr, /* create */
+  nullptr, /* destroy */
+  nullptr, /* callback_ctrl */
+};
+
 /* --- tsi_connection methods implementation. --- */
 
 static tsi_ssl_connection* ssl_connection_create(SSL* ssl, BIO* network_io) {
@@ -744,6 +853,17 @@ static tsi_ssl_connection* ssl_connection_create(SSL* ssl, BIO* network_io) {
   gpr_ref_init(&self->ref, 1);
   self->ssl = ssl;
   self->network_io = network_io;
+
+  grpc_slice_buffer_init(&self->protect_sb.data);
+  self->protect_bio = BIO_new(&ssl_bio_writer_vtable);
+  self->protect_bio->ptr = &self->protect_sb;
+  self->protect_bio->init = 1;
+
+  grpc_slice_buffer_init(&self->unprotect_sb.data);
+  self->unprotect_bio = BIO_new(&ssl_bio_reader_vtable);
+  self->unprotect_bio->ptr = &self->unprotect_sb;
+  self->unprotect_bio->init = 1;
+
   return self;
 }
 
@@ -756,9 +876,95 @@ static void ssl_connection_unref(tsi_ssl_connection* self) {
   if (gpr_unref(&self->ref)) {
     SSL_free(self->ssl);
     BIO_free(self->network_io);
+    grpc_slice_buffer_destroy(&self->protect_sb.data);
+    grpc_slice_buffer_destroy(&self->unprotect_sb.data);
     gpr_free(self);
   }
 }
+
+/* --- tsi_zero_copy_frame_protector methods implementation. ---*/
+
+tsi_result ssl_zero_copy_protector_protect(
+    tsi_zero_copy_grpc_protector* self, grpc_slice_buffer* unprotected_slices,
+    grpc_slice_buffer* protected_slices) {
+  tsi_ssl_zero_copy_frame_protector* impl =
+      reinterpret_cast<tsi_ssl_zero_copy_frame_protector*>(self);
+
+  while (unprotected_slices->length > 0) {
+    grpc_slice slice = grpc_slice_buffer_take_first(unprotected_slices);
+    if (GRPC_SLICE_LENGTH(slice) >= TSI_SSL_STAGING_BUFFER_SIZE) {
+      unsigned char* unprotected_bytes = GRPC_SLICE_START_PTR(slice);
+      size_t unprotected_bytes_size = GRPC_SLICE_LENGTH(slice);
+      tsi_result result = do_ssl_write(
+            impl->conn->ssl, unprotected_bytes, unprotected_bytes_size);
+      grpc_slice_unref(slice);
+      if (result != TSI_OK) return result;
+    } else {
+      grpc_slice_buffer_undo_take_first(unprotected_slices, slice);
+
+      unsigned char *unprotected_bytes = GRPC_SLICE_START_PTR(impl->protect_staging_sb);
+      size_t unprotected_bytes_size = GRPC_SLICE_LENGTH(impl->protect_staging_sb);
+      if (unprotected_bytes_size > unprotected_slices->length) {
+        unprotected_bytes_size = unprotected_slices->length;
+      }
+
+      grpc_slice_buffer_move_first_into_buffer(
+          unprotected_slices, unprotected_bytes_size, unprotected_bytes);
+
+      tsi_result result = do_ssl_write(
+            impl->conn->ssl, unprotected_bytes, unprotected_bytes_size);
+      if (result != TSI_OK) return result;
+    }
+  }
+
+  grpc_slice_buffer_move_into(&impl->conn->protect_sb.data, protected_slices);
+  return TSI_OK;
+}
+
+tsi_result ssl_zero_copy_protector_unprotect(
+    tsi_zero_copy_grpc_protector* self, grpc_slice_buffer* protected_slices,
+    grpc_slice_buffer* unprotected_slices) {
+  tsi_ssl_zero_copy_frame_protector* impl =
+      reinterpret_cast<tsi_ssl_zero_copy_frame_protector*>(self);
+
+  grpc_slice_buffer_move_into(protected_slices, &impl->conn->unprotect_sb.data);
+
+  for (;;) {
+    grpc_slice slice = grpc_slice_malloc(TSI_SSL_STAGING_BUFFER_SIZE);
+    unsigned char* unprotected_bytes = GRPC_SLICE_START_PTR(slice);
+    size_t unprotected_bytes_size = GRPC_SLICE_LENGTH(slice);
+
+    tsi_result result = do_ssl_read(
+          impl->conn->ssl, unprotected_bytes, &unprotected_bytes_size);
+    if (result != TSI_OK) {
+      grpc_slice_unref(slice);
+      return result;
+    }
+
+    if (unprotected_bytes_size == 0) {
+      grpc_slice_unref(slice);
+      return TSI_OK;
+    }
+
+    grpc_slice actual_slice = grpc_slice_sub_no_ref(
+        slice, 0, unprotected_bytes_size);
+    grpc_slice_buffer_add(unprotected_slices, actual_slice);
+  }
+}
+
+void ssl_zero_copy_protector_destroy(tsi_zero_copy_grpc_protector* self) {
+  tsi_ssl_zero_copy_frame_protector* impl =
+      reinterpret_cast<tsi_ssl_zero_copy_frame_protector*>(self);
+
+  ssl_connection_unref(impl->conn);
+  grpc_slice_unref(impl->protect_staging_sb);
+  gpr_free(impl);
+}
+
+tsi_zero_copy_grpc_protector_vtable zero_copy_protector_vtable = {
+  ssl_zero_copy_protector_protect, ssl_zero_copy_protector_unprotect,
+  ssl_zero_copy_protector_destroy,
+};
 
 /* --- tsi_frame_protector methods implementation. ---*/
 
@@ -949,6 +1155,7 @@ static void tsi_ssl_handshaker_factory_init(
 
   factory->vtable = &handshaker_factory_vtable;
   gpr_ref_init(&factory->refcount, 1);
+//  gpr_set_log_verbosity(GPR_LOG_SEVERITY_DEBUG);
 }
 
 /* --- tsi_handshaker_result methods implementation --- */
@@ -997,17 +1204,10 @@ static tsi_result ssl_result_extract_peer(
   return TSI_OK;
 }
 
-static tsi_result ssl_result_create_frame_protector(
-    const tsi_handshaker_result* self, size_t* max_output_protected_frame_size,
-    tsi_frame_protector** protector) {
+static size_t set_max_output_protected_frame_size(
+    size_t* max_output_protected_frame_size) {
   size_t actual_max_output_protected_frame_size =
       TSI_SSL_MAX_PROTECTED_FRAME_SIZE_UPPER_BOUND;
-  const ssl_handshaker_result* impl =
-      reinterpret_cast<const ssl_handshaker_result*>(self);
-  tsi_ssl_frame_protector* protector_impl =
-      static_cast<tsi_ssl_frame_protector*>(
-          gpr_zalloc(sizeof(*protector_impl)));
-
   if (max_output_protected_frame_size != nullptr) {
     if (*max_output_protected_frame_size >
         TSI_SSL_MAX_PROTECTED_FRAME_SIZE_UPPER_BOUND) {
@@ -1020,6 +1220,70 @@ static tsi_result ssl_result_create_frame_protector(
     }
     actual_max_output_protected_frame_size = *max_output_protected_frame_size;
   }
+  return actual_max_output_protected_frame_size;
+}
+
+static tsi_result ssl_result_create_zero_copy_grpc_protector(
+    const tsi_handshaker_result* self, size_t* max_output_protected_frame_size,
+    tsi_zero_copy_grpc_protector** protector) {
+  const ssl_handshaker_result* impl =
+      reinterpret_cast<const ssl_handshaker_result*>(self);
+  tsi_ssl_zero_copy_frame_protector* protector_impl =
+      static_cast<tsi_ssl_zero_copy_frame_protector*>(
+          gpr_zalloc(sizeof(*protector_impl)));
+
+//  size_t actual_max_output_protected_frame_size =
+  set_max_output_protected_frame_size(max_output_protected_frame_size);
+  protector_impl->conn = ssl_connection_ref(impl->conn);
+  protector_impl->protect_staging_sb = grpc_slice_malloc(TSI_SSL_STAGING_BUFFER_SIZE);
+
+  size_t pending_network = BIO_pending(impl->conn->network_io);
+  if (pending_network > 0) {
+    grpc_slice slice = grpc_slice_malloc(pending_network);
+    int read = BIO_read(
+        impl->conn->network_io, GRPC_SLICE_START_PTR(slice),
+        GRPC_SLICE_LENGTH(slice));
+    GPR_ASSERT(read > 0);
+    GPR_ASSERT(static_cast<size_t>(read) == pending_network);
+    grpc_slice_buffer_add(&impl->conn->protect_sb.data, slice);
+  }
+
+  BIO* ssl_bio = SSL_get_rbio(impl->conn->ssl);
+  size_t pending_ssl = BIO_pending(ssl_bio);
+  if (pending_ssl > 0) {
+    grpc_slice slice = grpc_slice_malloc(pending_ssl);
+    int read = BIO_read(
+        ssl_bio, GRPC_SLICE_START_PTR(slice),
+        GRPC_SLICE_LENGTH(slice));
+    GPR_ASSERT(read > 0);
+    GPR_ASSERT(static_cast<size_t>(read) == pending_ssl);
+    grpc_slice_buffer_add(&impl->conn->unprotect_sb.data, slice);
+  }
+
+  GPR_ASSERT(BIO_pending(impl->conn->network_io) == 0);
+  GPR_ASSERT(BIO_wpending(impl->conn->network_io) == 0);
+  GPR_ASSERT(BIO_pending(ssl_bio) == 0);
+  GPR_ASSERT(BIO_wpending(ssl_bio) == 0);
+
+  SSL_set_bio(protector_impl->conn->ssl, protector_impl->conn->unprotect_bio,
+              protector_impl->conn->protect_bio);
+
+  protector_impl->base.vtable = &zero_copy_protector_vtable;
+  *protector = &protector_impl->base;
+  return TSI_OK;
+}
+
+static tsi_result ssl_result_create_frame_protector(
+    const tsi_handshaker_result* self, size_t* max_output_protected_frame_size,
+    tsi_frame_protector** protector) {
+  const ssl_handshaker_result* impl =
+      reinterpret_cast<const ssl_handshaker_result*>(self);
+  tsi_ssl_frame_protector* protector_impl =
+      static_cast<tsi_ssl_frame_protector*>(
+          gpr_zalloc(sizeof(*protector_impl)));
+
+  size_t actual_max_output_protected_frame_size =
+      set_max_output_protected_frame_size(max_output_protected_frame_size);
   protector_impl->buffer_size =
       actual_max_output_protected_frame_size - TSI_SSL_MAX_PROTECTION_OVERHEAD;
   protector_impl->buffer =
@@ -1056,7 +1320,7 @@ static void ssl_result_destroy(tsi_handshaker_result* self) {
 
 static const tsi_handshaker_result_vtable result_vtable = {
     ssl_result_extract_peer,
-    nullptr, /* create_zero_copy_grpc_protector */
+    ssl_result_create_zero_copy_grpc_protector,
     ssl_result_create_frame_protector,
     ssl_result_get_unused_bytes,
     ssl_result_destroy,
