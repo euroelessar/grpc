@@ -153,10 +153,14 @@ static unsigned long openssl_thread_id_cb(void) {
 }
 #endif
 
+const size_t kSessionTicketEncryptionKeySize = 48;
+char kSessionTicketEncryptionKey[kSessionTicketEncryptionKeySize];
+
 static void init_openssl(void) {
   SSL_library_init();
   SSL_load_error_strings();
   OpenSSL_add_all_algorithms();
+  memset(kSessionTicketEncryptionKey, 'a', sizeof(kSessionTicketEncryptionKey));
 #if OPENSSL_VERSION_NUMBER < 0x10100000
   if (!CRYPTO_get_locking_callback()) {
     int num_locks = CRYPTO_num_locks();
@@ -1827,11 +1831,10 @@ tsi_result tsi_create_ssl_server_handshaker_factory_with_options(
         break;
       }
 
-      if (options->session_ticket_key != nullptr) {
+      if (true) {
         if (SSL_CTX_set_tlsext_ticket_keys(
-                impl->ssl_contexts[i],
-                const_cast<char*>(options->session_ticket_key),
-                options->session_ticket_key_size) == 0) {
+                impl->ssl_contexts[i], kSessionTicketEncryptionKey,
+                kSessionTicketEncryptionKeySize) == 0) {
           gpr_log(GPR_ERROR, "Invalid STEK size.");
           result = TSI_INVALID_ARGUMENT;
           break;
