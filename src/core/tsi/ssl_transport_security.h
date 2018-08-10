@@ -222,6 +222,13 @@ tsi_result tsi_create_ssl_server_handshaker_factory_ex(
     uint16_t num_alpn_protocols, tsi_ssl_server_handshaker_factory** factory);
 
 typedef struct {
+  /* session_ticket_key is a key for encrypting session keys. */
+  const char* session_ticket_key;
+  /* session_ticket_key_size is a size of session ticket encryption key. */
+  size_t session_ticket_key_size;
+} tsi_ssl_server_session_ticket_key;
+
+typedef struct {
   /* pem_key_cert_pairs is an array private key / certificate chains of the
      server. */
   const tsi_ssl_pem_key_cert_pair* pem_key_cert_pairs;
@@ -255,6 +262,8 @@ typedef struct {
   const char* session_ticket_key;
   /* session_ticket_key_size is a size of session ticket encryption key. */
   size_t session_ticket_key_size;
+  const tsi_ssl_server_session_ticket_key* session_ticket_keys;
+  size_t num_session_ticket_keys;
 } tsi_ssl_server_handshaker_options;
 
 /* Creates a server handshaker factory.

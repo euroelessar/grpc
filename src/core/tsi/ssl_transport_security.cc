@@ -1827,6 +1827,10 @@ tsi_result tsi_create_ssl_server_handshaker_factory_with_options(
         break;
       }
 
+      if (options->num_session_ticket_keys > 0) {
+        SSL_CTX_set_tlsext_ticket_key_cb(impl->ssl_contexts[i], )
+      }
+
       if (options->session_ticket_key != nullptr) {
         if (SSL_CTX_set_tlsext_ticket_keys(
                 impl->ssl_contexts[i],
