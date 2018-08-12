@@ -184,6 +184,138 @@ GRPCAPI void grpc_channel_watch_connectivity_state(
 /** Check whether a grpc channel supports connectivity watcher */
 GRPCAPI int grpc_channel_support_connectivity_watcher(grpc_channel* channel);
 
+/*********** EXPERIMENTAL API ************/
+/** Returns a grpc_addresses struct with enough space for
+    \a num_addresses addresses. */
+GRPCAPI grpc_addresses* grpc_new_addresses(size_t num_addresses,
+                                           void* reserved);
+
+/*********** EXPERIMENTAL API ************/
+/** Destroy addresses list. */
+GRPCAPI void grpc_addresses_destroy(grpc_addresses* addresses);
+
+/*********** EXPERIMENTAL API ************/
+/** Sets the value of the address at index \a index of \a addresses.
+ * Channel will connect to \a address directly.
+ * \a address is a socket address of length \a address_len. */
+GRPCAPI void grpc_addresses_set_direct_address(grpc_addresses* addresses,
+                                               size_t index,
+                                               const void* address,
+                                               size_t address_len);
+
+/*********** EXPERIMENTAL API ************/
+/** Sets the value of the address at index \a index of \a addresses.
+ * Channel will connect to remote balancer using \a address.
+ * \a address is a socket address of length \a address_len.
+ * \a balancer_name is used for overriding server name in secure connections and
+ * can be empty. If set grpc creates its copy. */
+GRPCAPI void grpc_addresses_set_balancer_address(grpc_addresses* addresses,
+                                                 size_t index,
+                                                 const void* address,
+                                                 size_t address_len,
+                                                 const char* balancer_name);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Create and register a new resolver factory with \a scheme.
+ * \a scheme must be unique.
+ * Thread Safety: All factories have to be registered before creating Channels.
+ */
+GRPCAPI grpc_resolver_factory* grpc_new_resolver_factory(const char* scheme,
+                                                         void* reserved);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Create new Resolver object for \a factory.
+ * User is expected to call both grpc_resolver_watch_initialization and
+ * grpc_resolver_watch_shutdown on newly created Resolver object.
+ */
+GRPCAPI grpc_resolver* grpc_resolver_factory_new_resolver(
+    grpc_resolver_factory* factory, void* reserved);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Destroy \a resolver.
+ * This function must be called iff shutdown was requested by gRPC by
+ * grpc_resolver_watch_shutdown.
+ * No \a resolver methods must be used after object is destroyed.
+ */
+GRPCAPI void grpc_resolver_destroy(grpc_resolver* resolver);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Wait for \a resolver initialization.
+ * Once \a resolver is initialized \a tag will be available in \a cq.
+ */
+GRPCAPI void grpc_resolver_watch_initialization(grpc_resolver* resolver,
+                                                grpc_completion_queue* cq,
+                                                void* tag, void* reserved);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Wait for \a resolver initialization.
+ * Once \a resolver is not needed by gRPC anymore \a tag will be available in \a
+ * cq.
+ */
+GRPCAPI void grpc_resolver_watch_shutdown(grpc_resolver* resolver,
+                                          grpc_completion_queue* cq, void* tag,
+                                          void* reserved);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Get the target of \a resolver.
+ * Object is invalid after grpc_resolver_destroy call on \a resolver.
+ */
+GRPCAPI grpc_resolver_target* grpc_resolver_get_target(grpc_resolver* resolver);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Get the scheme of \a target.
+ */
+GRPCAPI const char* grpc_resolver_target_get_scheme(
+    grpc_resolver_target* target);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Get the authority of \a target.
+ */
+GRPCAPI const char* grpc_resolver_target_get_authority(
+    grpc_resolver_target* target);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Get the path of \a target.
+ */
+GRPCAPI const char* grpc_resolver_target_get_path(grpc_resolver_target* target);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Get the number of query arguments of \a target.
+ */
+GRPCAPI size_t
+grpc_resolver_get_target_query_arguments_num(grpc_resolver_target* target);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Get the name of query argument at \a index of \a target.
+ */
+GRPCAPI const char* grpc_resolver_target_get_query_argument_name(
+    grpc_resolver_target* target, size_t index);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Get the value of query argument at \a index of \a target.
+ */
+GRPCAPI const char* grpc_resolver_target_get_query_argument_value(
+    grpc_resolver_target* target, size_t index);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Set new list of \a addresses to \a resolver.
+ */
+GRPCAPI void grpc_resolver_set_addresses(grpc_resolver* resolver,
+                                         grpc_addresses* addresses);
+
 /** Create a call given a grpc_channel, in order to call 'method'. All
     completions are sent to 'completion_queue'. 'method' and 'host' need only
     live through the invocation of this function.

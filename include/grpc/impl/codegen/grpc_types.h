@@ -58,6 +58,19 @@ typedef struct grpc_completion_queue grpc_completion_queue;
 /** An alarm associated with a completion queue. */
 typedef struct grpc_alarm grpc_alarm;
 
+/** A resolved address alongside any LB related information associated with it.
+ */
+typedef struct grpc_lb_addresses grpc_addresses;
+
+/** The Target interface describes the Resolver object's target. */
+typedef struct grpc_resolver_target grpc_resolver_target;
+
+/** The Resolver interface allows resolving targets into list of addresses. */
+typedef struct grpc_resolver grpc_resolver;
+
+/** The Resolver Factory interface creates Resolver objects. */
+typedef struct grpc_resolver_factory grpc_resolver_factory;
+
 /** The Channel interface allows creation of Call objects. */
 typedef struct grpc_channel grpc_channel;
 
