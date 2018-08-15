@@ -63,13 +63,28 @@ typedef struct grpc_alarm grpc_alarm;
 typedef struct grpc_lb_addresses grpc_addresses;
 
 /** The Target interface describes the Resolver object's target. */
-typedef struct grpc_resolver_target grpc_resolver_target;
+typedef struct grpc_uri grpc_uri;
 
 /** The Resolver interface allows resolving targets into list of addresses. */
 typedef struct grpc_resolver grpc_resolver;
 
+typedef struct grpc_resolver_observer grpc_resolver_observer;
+
+typedef struct grpc_resolver_vtable {
+  void (*request_reresolution)(void* resolver);
+  void (*shutdown)(void* resolver);
+} grpc_resolver_vtable;
+
 /** The Resolver Factory interface creates Resolver objects. */
+typedef struct grpc_resolver_factory_vtable grpc_resolver_factory_vtable;
 typedef struct grpc_resolver_factory grpc_resolver_factory;
+
+struct grpc_resolver_factory_vtable {
+  grpc_resolver* (*new_resolver)(void* factory, grpc_uri* uri,
+                                 grpc_resolver_observer* observer);
+  char* (*get_default_authority)(void* factory, grpc_uri* uri);
+  void (*destroy)(void* factory);
+};
 
 /** The Channel interface allows creation of Call objects. */
 typedef struct grpc_channel grpc_channel;

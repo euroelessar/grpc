@@ -221,100 +221,55 @@ GRPCAPI void grpc_addresses_set_balancer_address(grpc_addresses* addresses,
  * \a scheme must be unique.
  * Thread Safety: All factories have to be registered before creating Channels.
  */
-GRPCAPI grpc_resolver_factory* grpc_new_resolver_factory(const char* scheme,
-                                                         void* reserved);
+GRPCAPI void grpc_register_resolver_factory(const char* scheme,
+                                            grpc_resolver_factory* factory,
+                                            void* resolver_factory,
+                                            void* reserved);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Create new Resolver object for \a factory.
- * User is expected to call both grpc_resolver_watch_initialization and
- * grpc_resolver_watch_shutdown on newly created Resolver object.
+ * Pass new list of \a addresses to \a observer.
  */
-GRPCAPI grpc_resolver* grpc_resolver_factory_new_resolver(
-    grpc_resolver_factory* factory, void* reserved);
+GRPCAPI void grpc_resolver_update_addresses(grpc_resolver_observer* observer,
+                                            grpc_addresses* addresses);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Destroy \a resolver.
- * This function must be called iff shutdown was requested by gRPC by
- * grpc_resolver_watch_shutdown.
- * No \a resolver methods must be used after object is destroyed.
+ * Get the scheme of \a uri.
  */
-GRPCAPI void grpc_resolver_destroy(grpc_resolver* resolver);
+GRPCAPI const char* grpc_uri_get_scheme(grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Wait for \a resolver initialization.
- * Once \a resolver is initialized \a tag will be available in \a cq.
+ * Get the authority of \a uri.
  */
-GRPCAPI void grpc_resolver_watch_initialization(grpc_resolver* resolver,
-                                                grpc_completion_queue* cq,
-                                                void* tag, void* reserved);
+GRPCAPI const char* grpc_uri_get_authority(grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Wait for \a resolver initialization.
- * Once \a resolver is not needed by gRPC anymore \a tag will be available in \a
- * cq.
+ * Get the path of \a uri.
  */
-GRPCAPI void grpc_resolver_watch_shutdown(grpc_resolver* resolver,
-                                          grpc_completion_queue* cq, void* tag,
-                                          void* reserved);
+GRPCAPI const char* grpc_uri_get_path(grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the target of \a resolver.
- * Object is invalid after grpc_resolver_destroy call on \a resolver.
+ * Get the number of query arguments of \a uri.
  */
-GRPCAPI grpc_resolver_target* grpc_resolver_get_target(grpc_resolver* resolver);
+GRPCAPI size_t grpc_uri_get_query_arguments_num(grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the scheme of \a target.
+ * Get the name of query argument at \a index of \a uri.
  */
-GRPCAPI const char* grpc_resolver_target_get_scheme(
-    grpc_resolver_target* target);
+GRPCAPI const char* grpc_uri_get_query_argument_name(grpc_uri* uri,
+                                                     size_t index);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the authority of \a target.
+ * Get the value of query argument at \a index of \a uri.
  */
-GRPCAPI const char* grpc_resolver_target_get_authority(
-    grpc_resolver_target* target);
-
-/*********** EXPERIMENTAL API ************/
-/**
- * Get the path of \a target.
- */
-GRPCAPI const char* grpc_resolver_target_get_path(grpc_resolver_target* target);
-
-/*********** EXPERIMENTAL API ************/
-/**
- * Get the number of query arguments of \a target.
- */
-GRPCAPI size_t
-grpc_resolver_get_target_query_arguments_num(grpc_resolver_target* target);
-
-/*********** EXPERIMENTAL API ************/
-/**
- * Get the name of query argument at \a index of \a target.
- */
-GRPCAPI const char* grpc_resolver_target_get_query_argument_name(
-    grpc_resolver_target* target, size_t index);
-
-/*********** EXPERIMENTAL API ************/
-/**
- * Get the value of query argument at \a index of \a target.
- */
-GRPCAPI const char* grpc_resolver_target_get_query_argument_value(
-    grpc_resolver_target* target, size_t index);
-
-/*********** EXPERIMENTAL API ************/
-/**
- * Set new list of \a addresses to \a resolver.
- */
-GRPCAPI void grpc_resolver_set_addresses(grpc_resolver* resolver,
-                                         grpc_addresses* addresses);
+GRPCAPI const char* grpc_uri_get_query_argument_value(grpc_uri* uri,
+                                                      size_t index);
 
 /** Create a call given a grpc_channel, in order to call 'method'. All
     completions are sent to 'completion_queue'. 'method' and 'host' need only
