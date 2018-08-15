@@ -992,6 +992,7 @@ grpc_cc_library(
         "grpc_lb_policy_round_robin",
         "grpc_max_age_filter",
         "grpc_message_size_filter",
+        "grpc_resolver_custom",
         "grpc_resolver_dns_ares",
         "grpc_resolver_fake",
         "grpc_resolver_dns_native",
@@ -1457,6 +1458,18 @@ grpc_cc_library(
         "src/core/ext/filters/client_channel/resolver/sockaddr/sockaddr_resolver.cc",
     ],
     language = "c++",
+    deps = [
+        "grpc_base",
+        "grpc_client_channel",
+    ],
+)
+
+grpc_cc_library(
+    name = "grpc_resolver_custom",
+    srcs = ["src/core/ext/filters/client_channel/resolver/custom/custom_resolver.cc"],
+    hdrs = ["src/core/ext/filters/client_channel/resolver/custom/custom_resolver.h"],
+    language = "c++",
+    visibility = ["//test:__subpackages__"],
     deps = [
         "grpc_base",
         "grpc_client_channel",

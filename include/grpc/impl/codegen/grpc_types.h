@@ -63,7 +63,7 @@ typedef struct grpc_alarm grpc_alarm;
 typedef struct grpc_lb_addresses grpc_addresses;
 
 /** The Target interface describes the Resolver object's target. */
-typedef struct grpc_resolver_target grpc_resolver_target;
+typedef struct grpc_uri grpc_uri;
 
 /** The Resolver interface allows resolving targets into list of addresses. */
 typedef struct grpc_resolver grpc_resolver;

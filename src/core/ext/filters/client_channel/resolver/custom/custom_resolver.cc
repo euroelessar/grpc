@@ -45,6 +45,9 @@
 
 namespace grpc_core {
 
+struct grpc_resolver {};
+struct grpc_resolver_factory {};
+
 // This cannot be in an anonymous namespace, because it is a friend of
 // CustomResolverResponseGenerator.
 class CustomResolver : public Resolver, public grpc_resolver {
@@ -226,49 +229,6 @@ void CustomResolverResponseGenerator::SetFailure() {
 
 namespace {
 
-static void* response_generator_arg_copy(void* p) {
-  CustomResolverResponseGenerator* generator =
-      static_cast<CustomResolverResponseGenerator*>(p);
-  // TODO(roth): We currently deal with this ref manually.  Once the
-  // new channel args code is converted to C++, find a way to track this ref
-  // in a cleaner way.
-  RefCountedPtr<CustomResolverResponseGenerator> copy = generator->Ref();
-  copy.release();
-  return p;
-}
-
-static void response_generator_arg_destroy(void* p) {
-  CustomResolverResponseGenerator* generator =
-      static_cast<CustomResolverResponseGenerator*>(p);
-  generator->Unref();
-}
-
-static int response_generator_cmp(void* a, void* b) { return GPR_ICMP(a, b); }
-
-static const grpc_arg_pointer_vtable response_generator_arg_vtable = {
-    response_generator_arg_copy, response_generator_arg_destroy,
-    response_generator_cmp};
-
-}  // namespace
-
-grpc_arg CustomResolverResponseGenerator::MakeChannelArg(
-    CustomResolverResponseGenerator* generator) {
-  grpc_arg arg;
-  arg.type = GRPC_ARG_POINTER;
-  arg.key = (char*)GRPC_ARG_custom_RESOLVER_RESPONSE_GENERATOR;
-  arg.value.pointer.p = generator;
-  arg.value.pointer.vtable = &response_generator_arg_vtable;
-  return arg;
-}
-
-CustomResolverResponseGenerator* CustomResolverResponseGenerator::GetFromArgs(
-    const grpc_channel_args* args) {
-  const grpc_arg* arg =
-      grpc_channel_args_find(args, GRPC_ARG_custom_RESOLVER_RESPONSE_GENERATOR);
-  if (arg == nullptr || arg->type != GRPC_ARG_POINTER) return nullptr;
-  return static_cast<CustomResolverResponseGenerator*>(arg->value.pointer.p);
-}
-
 //
 // Factory
 //
@@ -291,104 +251,15 @@ class CustomResolverFactory : public ResolverFactory {
   char* scheme_;
 };
 
-struct QueryArgument {
-  QueryArgument(const char* name, const char* value) {}
-
-  char* name;
-  char* value;
-};
-
-class CustomResolverTarget : public grpc_resolver_target {
- public:
-  CustomResolverTarget(grpc_uri* uri) {
-    scheme_ = gpr_strdup(uri->scheme);
-    authority_ = gpr_strdup(uri->authority);
-    path_ = gpr_strdup(uri->path);
-    for (size_t i = 0; i < uri->num_query_parts; ++i) {
-      char* name = gpr_strdup(uri->query_parts[i]);
-      char* value = nullptr;
-      if (uri->query_parts_values[i]) {
-        value = gpr_strdup(uri->query_parts_values[i]);
-      }
-      query_arguments_.emplace_back(name, value);
-    }
-  }
-
-  ~CustomResolverTarget() {
-    gpr_free(scheme_);
-    gpr_free(authority_);
-    gpr_free(path_);
-    for (size_t i = 0; i < query_arguments_.size(); ++i) {
-      gpr_free(query_arguments_[i].first);
-      if (query_arguments_[i].second) {
-        gpr_free(query_arguments_[i].second);
-      }
-    }
-  }
-
-  const char* GetScheme() const { return scheme_; }
-  const char* GetAuthority() const { return authority_; }
-  const char* GetPath() const { return path_; }
-  size_t GetQueryArgumentsNum() const { return query_arguments_.size(); }
-  const char* GetQueryArgumentName(size_t index) const {
-    GPR_ASSERT(index < query_arguments_.size());
-    return query_arguments_[index].first;
-  }
-  const char* GetQueryArgumentValue(size_t index) const {
-    GPR_ASSERT(index < query_arguments_.size());
-    return query_arguments_[index].second;
-  }
-
- private:
-  char* scheme_;
-  char* authority_;
-  char* path_;
-  InlinedVector<std::pair<char*, char*>, 5> query_arguments_;
-};
+}  // namespace
 
 }  // namespace
 
-}  // namespace grpc_core
-
-void grpc_resolver_custom_init() {
-  grpc_core::ResolverRegistry::Builder::RegisterResolverFactory(
-      grpc_core::UniquePtr<grpc_core::ResolverFactory>(
-          grpc_core::New<grpc_core::CustomResolverFactory>()));
-}
+void grpc_resolver_custom_init() {}
 
 void grpc_resolver_custom_shutdown() {}
 
-const char* grpc_resolver_target_get_scheme(grpc_resolver_target* target) {
-  return static_cast<grpc_core::CustomResolverTarget*>(target)->GetScheme();
-}
-
-const char* grpc_resolver_target_get_authority(grpc_resolver_target* target) {
-  return static_cast<grpc_core::CustomResolverTarget*>(target)->GetAuthority();
-}
-
-const char* grpc_resolver_target_get_path(grpc_resolver_target* target) {
-  return static_cast<grpc_core::CustomResolverTarget*>(target)->GetPath();
-}
-
-size_t grpc_resolver_get_target_query_arguments_num(
-    grpc_resolver_target* target) {
-  return static_cast<grpc_core::CustomResolverTarget*>(target)
-      ->GetQueryArgumentsNum();
-}
-
-const char* grpc_resolver_target_get_query_argument_name(
-    grpc_resolver_target* target, size_t index) {
-  return static_cast<grpc_core::CustomResolverTarget*>(target)
-      ->GetQueryArgumentName(index);
-}
-
-const char* grpc_resolver_target_get_query_argument_value(
-    grpc_resolver_target* target, size_t index) {
-  return static_cast<grpc_core::CustomResolverTarget*>(target)
-      ->GetQueryArgumentValue(index);
-}
-
-grpc_addresses* grpc_new_addresses(size_t num_addresses, void* reserved) {
+grpc_addresses* grpc_addresses_create(size_t num_addresses, void* reserved) {
   GPR_ASSERT(reserved == nullptr);
   return grpc_lb_addresses_create(num_addresses, nullptr);
 }
@@ -412,8 +283,8 @@ void grpc_addresses_set_balancer_address(grpc_addresses* addresses,
                                 balancer_name, nullptr);
 }
 
-grpc_resolver_factory* grpc_new_resolver_factory(const char* scheme,
-                                                 void* reserved) {
+grpc_resolver_factory* grpc_resolver_factory_create(const char* scheme,
+                                                    void* reserved) {
   GPR_ASSERT(reserved == nullptr);
   grpc_core::ResolverRegistry::Builder::RegisterResolverFactory(
       grpc_core::UniquePtr<grpc_core::ResolverFactory>(
@@ -421,14 +292,14 @@ grpc_resolver_factory* grpc_new_resolver_factory(const char* scheme,
   return nullptr;
 }
 
-grpc_resolver* grpc_resolver_factory_new_resolver(
-    grpc_resolver_factory* factory, void* reserved) {
+grpc_resolver* grpc_resolver_create(grpc_resolver_factory* factory,
+                                    void* reserved) {
   GPR_ASSERT(reserved == nullptr);
 }
 
 void grpc_resolver_destroy(grpc_resolver* resolver) {}
 
-void grpc_resolver_watch_initialization(grpc_resolver* resolver,
+void grpc_resolver_watch_initialization(grpc_resolver* resolver, grpc_uri** uri,
                                         grpc_completion_queue* cq, void* tag,
                                         void* reserved) {
   GPR_ASSERT(reserved == nullptr);

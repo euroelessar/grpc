@@ -187,8 +187,8 @@ GRPCAPI int grpc_channel_support_connectivity_watcher(grpc_channel* channel);
 /*********** EXPERIMENTAL API ************/
 /** Returns a grpc_addresses struct with enough space for
     \a num_addresses addresses. */
-GRPCAPI grpc_addresses* grpc_new_addresses(size_t num_addresses,
-                                           void* reserved);
+GRPCAPI grpc_addresses* grpc_addresses_create(size_t num_addresses,
+                                              void* reserved);
 
 /*********** EXPERIMENTAL API ************/
 /** Destroy addresses list. */
@@ -221,8 +221,8 @@ GRPCAPI void grpc_addresses_set_balancer_address(grpc_addresses* addresses,
  * \a scheme must be unique.
  * Thread Safety: All factories have to be registered before creating Channels.
  */
-GRPCAPI grpc_resolver_factory* grpc_new_resolver_factory(const char* scheme,
-                                                         void* reserved);
+GRPCAPI grpc_resolver_factory* grpc_resolver_factory_create(const char* scheme,
+                                                            void* reserved);
 
 /*********** EXPERIMENTAL API ************/
 /**
@@ -230,8 +230,8 @@ GRPCAPI grpc_resolver_factory* grpc_new_resolver_factory(const char* scheme,
  * User is expected to call both grpc_resolver_watch_initialization and
  * grpc_resolver_watch_shutdown on newly created Resolver object.
  */
-GRPCAPI grpc_resolver* grpc_resolver_factory_new_resolver(
-    grpc_resolver_factory* factory, void* reserved);
+GRPCAPI grpc_resolver* grpc_resolver_create(grpc_resolver_factory* factory,
+                                            void* reserved);
 
 /*********** EXPERIMENTAL API ************/
 /**
@@ -246,14 +246,28 @@ GRPCAPI void grpc_resolver_destroy(grpc_resolver* resolver);
 /**
  * Wait for \a resolver initialization.
  * Once \a resolver is initialized \a tag will be available in \a cq.
+ * Resolver's target is passed in argument \a uri.
+ * It is caller's responsibility to destroy \a uri.
  */
 GRPCAPI void grpc_resolver_watch_initialization(grpc_resolver* resolver,
+                                                grpc_uri** uri,
                                                 grpc_completion_queue* cq,
                                                 void* tag, void* reserved);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Wait for \a resolver initialization.
+ * Wait for \a resolver to request reresolution.
+ * Once \a resolver is not needed by gRPC anymore \a tag will be available in \a
+ * cq.
+ */
+GRPCAPI void grpc_resolver_watch_request_reresolution(grpc_resolver* resolver,
+                                                      grpc_completion_queue* cq,
+                                                      void* tag,
+                                                      void* reserved);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Wait for \a resolver to shutdown.
  * Once \a resolver is not needed by gRPC anymore \a tag will be available in \a
  * cq.
  */
@@ -261,53 +275,61 @@ GRPCAPI void grpc_resolver_watch_shutdown(grpc_resolver* resolver,
                                           grpc_completion_queue* cq, void* tag,
                                           void* reserved);
 
-/*********** EXPERIMENTAL API ************/
-/**
- * Get the target of \a resolver.
- * Object is invalid after grpc_resolver_destroy call on \a resolver.
- */
-GRPCAPI grpc_resolver_target* grpc_resolver_get_target(grpc_resolver* resolver);
+GRPCAPI void grpc_uri_destroy(grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the scheme of \a target.
+ * Get the scheme of \a uri.
  */
-GRPCAPI const char* grpc_resolver_target_get_scheme(
-    grpc_resolver_target* target);
+GRPCAPI const char* grpc_uri_get_scheme(const grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the authority of \a target.
+ * Get the authority of \a uri.
  */
-GRPCAPI const char* grpc_resolver_target_get_authority(
-    grpc_resolver_target* target);
+GRPCAPI const char* grpc_uri_get_authority(const grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the path of \a target.
+ * Get the path of \a uri.
  */
-GRPCAPI const char* grpc_resolver_target_get_path(grpc_resolver_target* target);
+GRPCAPI const char* grpc_uri_get_path(const grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the number of query arguments of \a target.
+ * Get the value of \a uri argument with value \a key, or NULL \a key is not
+ * present.
  */
-GRPCAPI size_t
-grpc_resolver_get_target_query_arguments_num(grpc_resolver_target* target);
+GRPCAPI const char* grpc_uri_get_query_arg(const grpc_uri* uri,
+                                           const char* key);
+
+typedef struct grpc_uri_query_iterator {
+  const grpc_uri* uri;
+  size_t index;
+  const char* key;
+  const char* value;
+} grpc_uri_query_iterator;
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the name of query argument at \a index of \a target.
+ * Get the iterator over query of \a uri.
+ * Returned iterator points before the first element.
  */
-GRPCAPI const char* grpc_resolver_target_get_query_argument_name(
-    grpc_resolver_target* target, size_t index);
+GRPCAPI grpc_uri_query_iterator
+grpc_uri_get_query_iterator(const grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Get the value of query argument at \a index of \a target.
+ * Returns NULL when \a iterator is at the end.
  */
-GRPCAPI const char* grpc_resolver_target_get_query_argument_value(
-    grpc_resolver_target* target, size_t index);
+GRPCAPI grpc_uri_query_iterator* grpc_uri_query_iterator_next(
+    grpc_uri_query_iterator* iterator);
+
+/*********** EXPERIMENTAL API ************/
+/**
+ * Get the fragment of \a uri.
+ */
+GRPCAPI const char* grpc_uri_get_fragment(const grpc_uri* uri);
 
 /*********** EXPERIMENTAL API ************/
 /**
