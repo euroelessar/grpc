@@ -41,16 +41,18 @@
 #include "src/core/lib/slice/slice_internal.h"
 #include "src/core/lib/slice/slice_string_helpers.h"
 
-#include "src/core/ext/filters/client_channel/resolver/custom/custom_resolver.h"
-
 namespace grpc_core {
 
 struct grpc_resolver {};
 struct grpc_resolver_factory {};
 
-// This cannot be in an anonymous namespace, because it is a friend of
-// CustomResolverResponseGenerator.
-class CustomResolver : public Resolver, public grpc_resolver {
+namespace {
+
+struct grpc_addresses {
+  size_t capacity;
+};
+
+class CustomResolver : public Resolver {
  public:
   explicit CustomResolver(const ResolverArgs& args);
 
@@ -68,39 +70,24 @@ class CustomResolver : public Resolver, public grpc_resolver {
 
   void ShutdownLocked() override;
 
-  // passed-in parameters
+  // Passed-in parameters
   grpc_channel_args* channel_args_ = nullptr;
   // If not NULL, the next set of resolution results to be returned to
   // NextLocked()'s closure.
   grpc_channel_args* next_results_ = nullptr;
-  // Results to use for the pretended re-resolution in
-  // RequestReresolutionLocked().
-  grpc_channel_args* reresolution_results_ = nullptr;
-  // TODO(juanlishen): This can go away once pick_first is changed to not throw
-  // away its subchannels, since that will eliminate its dependence on
-  // channel_saw_error_locked() causing an immediate resolver return.
-  // A copy of the most-recently used resolution results.
-  grpc_channel_args* last_used_results_ = nullptr;
   // pending next completion, or NULL
   grpc_closure* next_completion_ = nullptr;
   // target result address for next completion
   grpc_channel_args** target_result_ = nullptr;
-  // if true, return failure
-  bool return_failure_ = false;
 };
 
 CustomResolver::CustomResolver(const ResolverArgs& args)
     : Resolver(args.combiner) {
   channel_args_ = grpc_channel_args_copy(args.args);
-  CustomResolverResponseGenerator* response_generator =
-      CustomResolverResponseGenerator::GetFromArgs(args.args);
-  if (response_generator != nullptr) response_generator->resolver_ = this;
 }
 
 CustomResolver::~CustomResolver() {
   grpc_channel_args_destroy(next_results_);
-  grpc_channel_args_destroy(reresolution_results_);
-  grpc_channel_args_destroy(last_used_results_);
   grpc_channel_args_destroy(channel_args_);
 }
 
@@ -112,26 +99,11 @@ void CustomResolver::NextLocked(grpc_channel_args** target_result,
   MaybeFinishNextLocked();
 }
 
-void CustomResolver::RequestReresolutionLocked() {
-  // A resolution must have been returned before an error is seen.
-  GPR_ASSERT(last_used_results_ != nullptr);
-  grpc_channel_args_destroy(next_results_);
-  if (reresolution_results_ != nullptr) {
-    next_results_ = grpc_channel_args_copy(reresolution_results_);
-  } else {
-    // If reresolution_results is unavailable, re-resolve with the most-recently
-    // used results to avoid a no-op re-resolution.
-    next_results_ = grpc_channel_args_copy(last_used_results_);
-  }
-  MaybeFinishNextLocked();
-}
+void CustomResolver::RequestReresolutionLocked() {}
 
 void CustomResolver::MaybeFinishNextLocked() {
-  if (next_completion_ != nullptr &&
-      (next_results_ != nullptr || return_failure_)) {
-    *target_result_ =
-        return_failure_ ? nullptr
-                        : grpc_channel_args_union(next_results_, channel_args_);
+  if (next_completion_ != nullptr && (next_results_ != nullptr)) {
+    *target_result_ = grpc_channel_args_union(next_results_, channel_args_);
     grpc_channel_args_destroy(next_results_);
     next_results_ = nullptr;
     GRPC_CLOSURE_SCHED(next_completion_, GRPC_ERROR_NONE);
@@ -150,92 +122,17 @@ void CustomResolver::ShutdownLocked() {
 }
 
 //
-// CustomResolverResponseGenerator
+// Observer
 //
 
-struct SetResponseClosureArg {
-  grpc_closure set_response_closure;
-  CustomResolverResponseGenerator* generator;
-  grpc_channel_args* response;
-};
-
-void CustomResolverResponseGenerator::SetResponseLocked(void* arg,
-                                                        grpc_error* error) {
-  SetResponseClosureArg* closure_arg = static_cast<SetResponseClosureArg*>(arg);
-  CustomResolver* resolver = closure_arg->generator->resolver_;
-  grpc_channel_args_destroy(resolver->next_results_);
-  resolver->next_results_ = closure_arg->response;
-  grpc_channel_args_destroy(resolver->last_used_results_);
-  resolver->last_used_results_ = grpc_channel_args_copy(closure_arg->response);
-  resolver->MaybeFinishNextLocked();
-  Delete(closure_arg);
-}
-
-void CustomResolverResponseGenerator::SetResponse(grpc_channel_args* response) {
-  GPR_ASSERT(response != nullptr);
-  GPR_ASSERT(resolver_ != nullptr);
-  SetResponseClosureArg* closure_arg = New<SetResponseClosureArg>();
-  closure_arg->generator = this;
-  closure_arg->response = grpc_channel_args_copy(response);
-  GRPC_CLOSURE_SCHED(
-      GRPC_CLOSURE_INIT(&closure_arg->set_response_closure, SetResponseLocked,
-                        closure_arg,
-                        grpc_combiner_scheduler(resolver_->combiner())),
-      GRPC_ERROR_NONE);
-}
-
-void CustomResolverResponseGenerator::SetReresolutionResponseLocked(
-    void* arg, grpc_error* error) {
-  SetResponseClosureArg* closure_arg = static_cast<SetResponseClosureArg*>(arg);
-  CustomResolver* resolver = closure_arg->generator->resolver_;
-  grpc_channel_args_destroy(resolver->reresolution_results_);
-  resolver->reresolution_results_ = closure_arg->response;
-  Delete(closure_arg);
-}
-
-void CustomResolverResponseGenerator::SetReresolutionResponse(
-    grpc_channel_args* response) {
-  GPR_ASSERT(resolver_ != nullptr);
-  SetResponseClosureArg* closure_arg = New<SetResponseClosureArg>();
-  closure_arg->generator = this;
-  closure_arg->response =
-      response != nullptr ? grpc_channel_args_copy(response) : nullptr;
-  GRPC_CLOSURE_SCHED(
-      GRPC_CLOSURE_INIT(&closure_arg->set_response_closure,
-                        SetReresolutionResponseLocked, closure_arg,
-                        grpc_combiner_scheduler(resolver_->combiner())),
-      GRPC_ERROR_NONE);
-}
-
-void CustomResolverResponseGenerator::SetFailureLocked(void* arg,
-                                                       grpc_error* error) {
-  SetResponseClosureArg* closure_arg = static_cast<SetResponseClosureArg*>(arg);
-  CustomResolver* resolver = closure_arg->generator->resolver_;
-  resolver->return_failure_ = true;
-  resolver->MaybeFinishNextLocked();
-  Delete(closure_arg);
-}
-
-void CustomResolverResponseGenerator::SetFailure() {
-  GPR_ASSERT(resolver_ != nullptr);
-  SetResponseClosureArg* closure_arg = New<SetResponseClosureArg>();
-  closure_arg->generator = this;
-  GRPC_CLOSURE_SCHED(
-      GRPC_CLOSURE_INIT(&closure_arg->set_response_closure, SetFailureLocked,
-                        closure_arg,
-                        grpc_combiner_scheduler(resolver_->combiner())),
-      GRPC_ERROR_NONE);
-}
-
-namespace {
+class CustomObserver : public grpc_resolver {};
 
 //
 // Factory
 //
 
-namespace {
-
-class CustomResolverFactory : public ResolverFactory {
+class CustomResolverFactory : public ResolverFactory,
+                              public grpc_resolver_factory {
  public:
   CustomResolverFactory(const char* scheme) : _scheme(gpr_strdup(scheme)) {}
   ~CustomResolverFactory() { gpr_free(scheme_); }
@@ -253,7 +150,7 @@ class CustomResolverFactory : public ResolverFactory {
 
 }  // namespace
 
-}  // namespace
+}  // namespace grpc_core
 
 void grpc_resolver_custom_init() {}
 
@@ -292,24 +189,30 @@ grpc_resolver_factory* grpc_resolver_factory_create(const char* scheme,
   return nullptr;
 }
 
-grpc_resolver* grpc_resolver_create(grpc_resolver_factory* factory,
-                                    void* reserved) {
+void grpc_resolver_factory_watch_next(grpc_resolver_factory* factory,
+                                      grpc_resolver** resolver, grpc_uri** uri,
+                                      grpc_completion_queue* cq, void* tag,
+                                      void* reserved) {
   GPR_ASSERT(reserved == nullptr);
+  auto custom_factory = static_cast<grpc_core::CustomResolverFactory*>(factory);
+  custom_factory->WatchNext(resolver, uri, cq, tag);
 }
 
-void grpc_resolver_destroy(grpc_resolver* resolver) {}
-
-void grpc_resolver_watch_initialization(grpc_resolver* resolver, grpc_uri** uri,
-                                        grpc_completion_queue* cq, void* tag,
-                                        void* reserved) {
-  GPR_ASSERT(reserved == nullptr);
+void grpc_resolver_destroy(grpc_resolver* resolver) {
+  auto custom_observer = static_cast<grpc_core::CustomObserver*>(resolver);
+  custom_observer->Unref();
 }
 
 void grpc_resolver_watch_shutdown(grpc_resolver* resolver,
                                   grpc_completion_queue* cq, void* tag,
                                   void* reserved) {
   GPR_ASSERT(reserved == nullptr);
+  auto custom_observer = static_cast<grpc_core::CustomObserver*>(resolver);
+  custom_observer->WatchShutdown(cq, tag);
 }
 
 void grpc_resolver_set_addresses(grpc_resolver* resolver,
-                                 grpc_addresses* addresses) {}
+                                 grpc_addresses* addresses) {
+  auto custom_observer = static_cast<grpc_core::CustomObserver*>(resolver);
+  custom_observer->SetAddresses(addresses);
+}

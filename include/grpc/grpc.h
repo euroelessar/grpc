@@ -226,12 +226,17 @@ GRPCAPI grpc_resolver_factory* grpc_resolver_factory_create(const char* scheme,
 
 /*********** EXPERIMENTAL API ************/
 /**
- * Create new Resolver object for \a factory.
- * User is expected to call both grpc_resolver_watch_initialization and
- * grpc_resolver_watch_shutdown on newly created Resolver object.
+ * Wait for next resolver request.
+ * Once resolver is initialized \a tag will be available in \a cq.
+ * Resolver object is passed in argument \a resolver.
+ * Resolver's target is passed in argument \a uri.
+ * Ownership of \a uri and \a resolver objects is transfered to user.
  */
-GRPCAPI grpc_resolver* grpc_resolver_create(grpc_resolver_factory* factory,
-                                            void* reserved);
+GRPCAPI void grpc_resolver_factory_watch_next(grpc_resolver_factory* factory,
+                                              grpc_resolver** resolver,
+                                              grpc_uri** uri,
+                                              grpc_completion_queue* cq,
+                                              void* tag, void* reserved);
 
 /*********** EXPERIMENTAL API ************/
 /**
@@ -241,18 +246,6 @@ GRPCAPI grpc_resolver* grpc_resolver_create(grpc_resolver_factory* factory,
  * No \a resolver methods must be used after object is destroyed.
  */
 GRPCAPI void grpc_resolver_destroy(grpc_resolver* resolver);
-
-/*********** EXPERIMENTAL API ************/
-/**
- * Wait for \a resolver initialization.
- * Once \a resolver is initialized \a tag will be available in \a cq.
- * Resolver's target is passed in argument \a uri.
- * It is caller's responsibility to destroy \a uri.
- */
-GRPCAPI void grpc_resolver_watch_initialization(grpc_resolver* resolver,
-                                                grpc_uri** uri,
-                                                grpc_completion_queue* cq,
-                                                void* tag, void* reserved);
 
 /*********** EXPERIMENTAL API ************/
 /**

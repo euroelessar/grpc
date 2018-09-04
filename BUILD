@@ -1466,10 +1466,10 @@ grpc_cc_library(
 
 grpc_cc_library(
     name = "grpc_resolver_custom",
-    srcs = ["src/core/ext/filters/client_channel/resolver/custom/custom_resolver.cc"],
-    hdrs = ["src/core/ext/filters/client_channel/resolver/custom/custom_resolver.h"],
+    srcs = [
+        "src/core/ext/filters/client_channel/resolver/custom/custom_resolver.cc",
+    ],
     language = "c++",
-    visibility = ["//test:__subpackages__"],
     deps = [
         "grpc_base",
         "grpc_client_channel",
