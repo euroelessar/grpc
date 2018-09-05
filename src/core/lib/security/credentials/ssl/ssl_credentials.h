@@ -23,10 +23,24 @@
 #include "src/core/lib/security/credentials/credentials.h"
 
 #include "src/core/lib/security/security_connector/ssl/ssl_security_connector.h"
+#include "src/core/lib/security/security_connector/ssl_utils.h"
+
+struct grpc_ssl_channel_certificate_config {
+  grpc_ssl_pem_key_cert_pair* pem_key_cert_pair;
+  char* pem_root_certs;
+};
+
+typedef struct {
+  grpc_ssl_channel_certificate_config_callback cb;
+  void* user_data;
+} grpc_ssl_channel_certificate_config_fetcher;
 
 typedef struct {
   grpc_channel_credentials base;
-  grpc_ssl_config config;
+  gpr_mu lock;
+  grpc_core::VersionedClientSslConfig config;
+  grpc_ssl_channel_certificate_config_fetcher certificate_config_fetcher;
+  verify_peer_options verify_options;
 } grpc_ssl_credentials;
 
 struct grpc_ssl_server_certificate_config {
