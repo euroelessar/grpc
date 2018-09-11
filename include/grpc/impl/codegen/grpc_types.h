@@ -68,6 +68,10 @@ typedef struct grpc_uri grpc_uri;
 /** The Resolver interface allows resolving targets into list of addresses. */
 typedef struct grpc_resolver grpc_resolver;
 
+typedef struct grpc_resolver_args grpc_resolver_args;
+
+typedef struct grpc_resolver_observer grpc_resolver_observer;
+
 /** The Resolver Factory interface creates Resolver objects. */
 typedef struct grpc_resolver_factory grpc_resolver_factory;
 
