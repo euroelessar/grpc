@@ -58,10 +58,17 @@ typedef struct grpc_completion_queue grpc_completion_queue;
 /** An alarm associated with a completion queue. */
 typedef struct grpc_alarm grpc_alarm;
 
+/** The Resolver Observer interface allows providing gRPC updates list of
+   resolved addresses. */
+typedef struct grpc_resolver_observer grpc_resolver_observer;
+
 /** Arguments for the resolve operation. */
 typedef struct grpc_resolver_args {
   /** The URI of a target used for the resolving. */
   const char* target_uri;
+  /** The Observer is used for providing new resolving results to the caller.
+     It's safe to destroy observer at any moment of time. */
+  grpc_resolver_observer* observer;
 } grpc_resolver_args;
 
 /** A resolved address alongside any LB related information associated with it.
@@ -70,7 +77,7 @@ typedef struct grpc_address {
   /** The target is an uri with the ipv4, ipv6, or unix scheme. */
   const char* target;
   /** If set, this address is for a grpclb load balancer. */
-  bool is_balancer;
+  int is_balancer;
   /** If set, gRPC will use this server name to connect to the remote balancer.
    */
   const char* balancer_name;
@@ -91,18 +98,13 @@ typedef void (*grpc_resolver_next_cb)(void* user_data,
                                       const char* error_details);
 
 /** The Resolver interfaces.
-    THREAD SAFETY: All callbacks for the single resolver object will be
+    THREAD SAFETY: All methods for the single resolver object will be
    called from a single thread. */
 typedef struct grpc_resolver {
-  /** Requests a callback when a new result becomes available. */
-  void (*next)(grpc_resolver* resolver, grpc_resolver_next_cb cb,
-               void* user_data);
   /** Request re-resolution of the addresses. */
-  void (*request_reresolution)(grpc_resolver* resolver);
-  /** Request shutdown of the resolver. */
-  void (*shutdown)(grpc_resolver* resolver);
-  /** Destroy the user data. */
-  void (*destroy)(grpc_resolver* resolver);
+  void (*request_reresolution)(struct grpc_resolver* resolver);
+  /** Destroy the resolver. */
+  void (*destroy)(struct grpc_resolver* resolver);
 } grpc_resolver;
 
 typedef void (*grpc_resolver_creation_cb)(void* user_data,
@@ -126,12 +128,12 @@ typedef struct grpc_resolver_factory {
 
      THREAD SAFETY: create_resolver method can be called concurrently from
      multiple threads. */
-  int (*create_resolver)(grpc_resolver_factory* factory,
+  int (*create_resolver)(struct grpc_resolver_factory* factory,
                          grpc_resolver_args* args, grpc_resolver_creation_cb cb,
                          void* user_data, grpc_resolver** resolver,
                          const char** error_details);
   /** Destroy the user data. */
-  void (*destroy)(grpc_resolver_factory* factory);
+  void (*destroy)(struct grpc_resolver_factory* factory);
 } grpc_resolver_factory;
 
 /** The Channel interface allows creation of Call objects. */

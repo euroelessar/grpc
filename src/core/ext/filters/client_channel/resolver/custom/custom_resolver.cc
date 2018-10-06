@@ -39,12 +39,14 @@
 #include "src/core/lib/iomgr/closure.h"
 #include "src/core/lib/iomgr/combiner.h"
 #include "src/core/lib/iomgr/resolve_address.h"
+#include "src/core/lib/iomgr/timer.h"
 #include "src/core/lib/iomgr/unix_sockets_posix.h"
 #include "src/core/lib/slice/slice_internal.h"
 #include "src/core/lib/slice/slice_string_helpers.h"
 #include "src/core/lib/transport/service_config.h"
 
 struct grpc_addresses {};
+struct grpc_resolver_observer {};
 
 namespace grpc_core {
 
@@ -52,18 +54,7 @@ namespace {
 
 class PluginResolverFactory;
 
-struct OnCreationArg {
-  OnCreationArg(RefCountedPtr<Resolver> resolver,
-                grpc_resolver* resolver_plugin, grpc_error* error,
-                grpc_closure_scheduler* scheduler);
-
-  RefCountedPtr<Resolver> resolver;
-  grpc_resolver* resolver_plugin;
-  grpc_error* error;
-  grpc_closure closure;
-};
-
-class PluginResolver : public Resolver {
+class PluginResolver : public Resolver, public grpc_resolver_observer {
  public:
   PluginResolver(grpc_resolver_factory* factory, const ResolverArgs& args);
 
@@ -71,6 +62,9 @@ class PluginResolver : public Resolver {
                   grpc_closure* on_complete) override;
   void RequestReresolutionLocked() override;
   static void OnCreationLocked(void* user_data, grpc_error* error);
+  void SetNextResult(const grpc_resolver_result* result, grpc_error* error);
+  static void SetNextResultLocked(void* raw_args, grpc_error* error);
+  static void UnrefAsObserver(PluginResolver* resolver);
 
  private:
   virtual ~PluginResolver();
@@ -80,19 +74,31 @@ class PluginResolver : public Resolver {
                          const char* error_details);
   static void OnNextResult(void* user_data, const grpc_resolver_result* result,
                            const char* error_details);
-  void StartNextLocked();
+  void MaybeFinishNextLocked();
+  void MaybeStartResolvingLocked();
+  static void OnNextResolutionLocked(void* arg, grpc_error* error);
+  void StartResolvingLocked();
   void ShutdownLocked() override;
 
   // Resolver implmentation.
-  bool resolver_initialized_ = false;
-  bool next_requested_ = false;
+  bool request_reresolution_requested_ = false;
   bool shutdown_requested_ = false;
   grpc_resolver* resolver_ = nullptr;
-  grpc_error* resolver_error_ = nullptr;
+  grpc_error* initialization_error_ = nullptr;
 
   // Base channel arguments.
   grpc_channel_args* channel_args_;
-
+  // Next resolved addresses.
+  grpc_channel_args* resolved_channel_args_ = nullptr;
+  grpc_error* resolved_error_ = nullptr;
+  // Next resolution timer.
+  bool have_next_resolution_timer_ = false;
+  grpc_timer next_resolution_timer_;
+  grpc_closure on_next_resolution_;
+  // Min time between re-resolution requests.
+  grpc_millis min_time_between_resolutions_;
+  // Timestamp of last re-resolution request.
+  grpc_millis last_resolution_timestamp_ = -1;
   // Pending next completion, or NULL.
   grpc_closure* next_completion_ = nullptr;
   grpc_channel_args** target_result_ = nullptr;
@@ -102,8 +108,16 @@ PluginResolver::PluginResolver(grpc_resolver_factory* factory,
                                const ResolverArgs& args)
     : Resolver(args.combiner),
       channel_args_(grpc_channel_args_copy(args.args)) {
-  memset(&resolver_, 0, sizeof(resolver_));
-  grpc_resolver_args api_args = {args.target};
+  GRPC_CLOSURE_INIT(&on_next_resolution_,
+                    PluginResolver::OnNextResolutionLocked, this,
+                    grpc_combiner_scheduler(args.combiner));
+  const grpc_arg* arg = grpc_channel_args_find(
+      args.args, GRPC_ARG_DNS_MIN_TIME_BETWEEN_RESOLUTIONS_MS);
+  min_time_between_resolutions_ =
+      grpc_channel_arg_get_integer(arg, {1000, 0, INT_MAX});
+  // Ownership is given to the plugin implementation.
+  Ref(DEBUG_LOCATION, "grpc_resolver_observer_create").release();
+  grpc_resolver_args api_args = {args.target, this};
   grpc_resolver* resolver = nullptr;
   const char* error_details = nullptr;
   if (!factory->create_resolver(factory, &api_args, OnCreation, this, &resolver,
@@ -121,14 +135,32 @@ PluginResolver::PluginResolver(grpc_resolver_factory* factory,
 
 PluginResolver::~PluginResolver() {
   grpc_channel_args_destroy(channel_args_);
-  if (resolver_error_ == GRPC_ERROR_NONE) {
-    resolver_->destroy(resolver_);
-  }
-  GRPC_ERROR_UNREF(resolver_error_);
+  grpc_channel_args_destroy(resolved_channel_args_);
+  GRPC_ERROR_UNREF(initialization_error_);
+  GRPC_ERROR_UNREF(resolved_error_);
 }
+
+struct OnCreationArg {
+  OnCreationArg(RefCountedPtr<Resolver> resolver,
+                grpc_resolver* resolver_plugin, grpc_error* error,
+                grpc_closure_scheduler* scheduler)
+      : resolver(std::move(resolver)),
+        resolver_plugin(resolver_plugin),
+        error(error) {
+    GRPC_CLOSURE_INIT(&closure, PluginResolver::OnCreationLocked, this,
+                      scheduler);
+    GRPC_CLOSURE_SCHED(&closure, GRPC_ERROR_NONE);
+  }
+
+  RefCountedPtr<Resolver> resolver;
+  grpc_resolver* resolver_plugin;
+  grpc_error* error;
+  grpc_closure closure;
+};
 
 void PluginResolver::OnCreation(void* user_data, grpc_resolver* resolver,
                                 const char* error_details) {
+  grpc_core::ExecCtx exec_ctx;
   auto* plugin_resolver = static_cast<PluginResolver*>(user_data);
   grpc_error* error = nullptr;
   if (resolver == nullptr) {
@@ -147,37 +179,119 @@ void PluginResolver::OnCreationLocked(void* user_data, grpc_error* error) {
 }
 
 void PluginResolver::InitLocked(grpc_resolver* resolver, grpc_error* error) {
-  resolver_initialized_ = true;
   resolver_ = resolver;
-  resolver_error_ = error;
-  if (shutdown_requested_ && resolver_error_ == GRPC_ERROR_NONE) {
-    resolver_->shutdown(resolver_);
-    if (next_requested_) {
-      GRPC_CLOSURE_SCHED(next_completion_, GRPC_ERROR_CANCELLED);
-    }
-  } else if (next_requested_) {
-    StartNextLocked();
+  initialization_error_ = error;
+  if (shutdown_requested_ && resolver != nullptr) {
+    resolver_->destroy(resolver_);
+  } else {
+    MaybeFinishNextLocked();
+    if (request_reresolution_requested_) MaybeStartResolvingLocked();
   }
+}
+
+struct SetNextArgs {
+  SetNextArgs(RefCountedPtr<Resolver> resolver,
+              grpc_channel_args* resolved_channel_args, grpc_error* error,
+              grpc_closure_scheduler* scheduler)
+      : resolver(std::move(resolver)),
+        resolved_channel_args(resolved_channel_args),
+        error(error) {
+    GRPC_CLOSURE_INIT(&closure, PluginResolver::SetNextResultLocked, this,
+                      scheduler);
+    GRPC_CLOSURE_SCHED(&closure, GRPC_ERROR_NONE);
+  }
+
+  RefCountedPtr<Resolver> resolver;
+  grpc_channel_args* resolved_channel_args;
+  grpc_error* error;
+  grpc_closure closure;
+};
+
+void PluginResolver::SetNextResult(const grpc_resolver_result* result,
+                                   grpc_error* error) {
+  grpc_channel_args* resolved_channel_args = nullptr;
+  if (result != nullptr) {
+    resolved_channel_args =
+        AddResolverResultToChannelArgs(channel_args_, result);
+  }
+  // TODO(elessar): Are there any ordering guarantees here?
+  New<SetNextArgs>(Ref(), resolved_channel_args, error,
+                   grpc_combiner_scheduler(combiner()));
+}
+
+void PluginResolver::SetNextResultLocked(void* raw_args, grpc_error* error) {
+  auto* args = static_cast<SetNextArgs*>(raw_args);
+  auto* resolver = static_cast<PluginResolver*>(args->resolver.get());
+  grpc_channel_args_destroy(resolver->resolved_channel_args_);
+  if (resolver->resolved_error_ != nullptr)
+    GRPC_ERROR_UNREF(resolver->resolved_error_);
+  resolver->resolved_channel_args_ = args->resolved_channel_args;
+  resolver->resolved_error_ = args->error;
+  resolver->MaybeFinishNextLocked();
+  Delete(args);
+}
+
+void PluginResolver::UnrefAsObserver(PluginResolver* resolver) {
+  // TODO(elessar): Maybe need to call Unref from the combiner's thread?
+  resolver->Unref(DEBUG_LOCATION, "grpc_resolver_observer_destroy");
 }
 
 void PluginResolver::NextLocked(grpc_channel_args** target_result,
                                 grpc_closure* on_complete) {
   GPR_ASSERT(next_completion_ == nullptr);
-  next_requested_ = true;
   next_completion_ = on_complete;
   target_result_ = target_result;
-  if (resolver_initialized_) StartNextLocked();
+  MaybeFinishNextLocked();
 }
 
-void PluginResolver::StartNextLocked() {
-  if (resolver_error_ == GRPC_ERROR_NONE) {
-    auto* user_data = Ref(DEBUG_LOCATION, "grpc_resolver_next").release();
-    resolver_->next(resolver_, OnNextResult, user_data);
-  } else {
-    auto* next_completion = next_completion_;
-    next_completion_ = nullptr;
-    GRPC_CLOSURE_SCHED(next_completion, GRPC_ERROR_REF(resolver_error_));
+void PluginResolver::MaybeStartResolvingLocked() {
+  if (resolver_ == nullptr) return;
+  // TODO(roth): Remove code duplication once this logic is handled by the
+  // client channel.
+  // NOTE(elessar): This logic is copied from DNS resolver.
+  // If there is an existing timer, the time it fires is the
+  // earliest time we can start the next resolution.
+  if (have_next_resolution_timer_) return;
+  if (last_resolution_timestamp_ >= 0) {
+    const grpc_millis earliest_next_resolution =
+        last_resolution_timestamp_ + min_time_between_resolutions_;
+    const grpc_millis ms_until_next_resolution =
+        earliest_next_resolution - grpc_core::ExecCtx::Get()->Now();
+    if (ms_until_next_resolution > 0) {
+      const grpc_millis last_resolution_ago =
+          grpc_core::ExecCtx::Get()->Now() - last_resolution_timestamp_;
+      gpr_log(GPR_DEBUG,
+              "In cooldown from last resolution (from %" PRId64
+              " ms ago). Will resolve again in %" PRId64 " ms",
+              last_resolution_ago, ms_until_next_resolution);
+      have_next_resolution_timer_ = true;
+      // TODO(roth): We currently deal with this ref manually.  Once the
+      // new closure API is done, find a way to track this ref with the timer
+      // callback as part of the type system.
+      RefCountedPtr<Resolver> self =
+          Ref(DEBUG_LOCATION, "next_resolution_timer_cooldown");
+      self.release();
+      grpc_timer_init(&next_resolution_timer_, ms_until_next_resolution,
+                      &on_next_resolution_);
+      return;
+    }
   }
+  StartResolvingLocked();
+}
+
+void PluginResolver::OnNextResolutionLocked(void* arg, grpc_error* error) {
+  PluginResolver* resolver = static_cast<PluginResolver*>(arg);
+  resolver->have_next_resolution_timer_ = false;
+  if (error == GRPC_ERROR_NONE) {
+    resolver->StartResolvingLocked();
+  }
+  resolver->Unref(DEBUG_LOCATION, "retry-timer");
+}
+
+void PluginResolver::StartResolvingLocked() {
+  gpr_log(GPR_DEBUG, "Requesting re-resolution.");
+  resolver_->request_reresolution(resolver_);
+  last_resolution_timestamp_ = grpc_core::ExecCtx::Get()->Now();
 }
 
 void PluginResolver::OnNextResult(void* user_data,
@@ -197,28 +311,39 @@ void PluginResolver::OnNextResult(void* user_data,
   resolver->Unref(DEBUG_LOCATION, "grpc_resolver_next_cb");
 }
 
-void PluginResolver::RequestReresolutionLocked() {
-  if (resolver_initialized_ && resolver_error_ == GRPC_ERROR_NONE) {
-    resolver_->request_reresolution(resolver_);
+void PluginResolver::MaybeFinishNextLocked() {
+  if (next_completion_ == nullptr) return;
+  if (resolved_channel_args_ == nullptr && resolved_error_ == nullptr &&
+      initialization_error_ == nullptr) {
+    return;
   }
+  grpc_error* error = nullptr;
+  if (initialization_error_ != nullptr) {
+    error = GRPC_ERROR_REF(initialization_error_);
+  } else if (resolved_error_ != nullptr) {
+    error = resolved_error_;
+    resolved_error_ = nullptr;
+  }
+  *target_result_ = resolved_channel_args_;
+  resolved_channel_args_ = nullptr;
+  auto* next_completion = next_completion_;
+  next_completion_ = nullptr;
+  GRPC_CLOSURE_SCHED(next_completion, error);
+}
+
+void PluginResolver::RequestReresolutionLocked() {
+  request_reresolution_requested_ = true;
+  MaybeStartResolvingLocked();
 }
 
 void PluginResolver::ShutdownLocked() {
   shutdown_requested_ = true;
-  if (resolver_initialized_ && resolver_error_ == GRPC_ERROR_NONE) {
-    resolver_->shutdown(resolver_);
+  if (resolver_ != nullptr) resolver_->destroy(resolver_);
+  if (next_completion_ != nullptr) {
+    auto* next_completion = next_completion_;
+    next_completion_ = nullptr;
+    GRPC_CLOSURE_SCHED(next_completion, GRPC_ERROR_CANCELLED);
   }
-}
-
-OnCreationArg::OnCreationArg(RefCountedPtr<Resolver> resolver,
-                             grpc_resolver* resolver_plugin, grpc_error* error,
-                             grpc_closure_scheduler* scheduler)
-    : resolver(std::move(resolver)),
-      resolver_plugin(resolver_plugin),
-      error(error) {
-  GRPC_CLOSURE_INIT(&closure, PluginResolver::OnCreationLocked, this,
-                    scheduler);
-  GRPC_CLOSURE_SCHED(&closure, GRPC_ERROR_NONE);
 }
 
 //
@@ -275,7 +400,12 @@ grpc_channel_args* AddResolverResultToChannelArgs(
   grpc_lb_addresses* addresses =
       grpc_lb_addresses_create_from_resolver_result(result);
   new_args.emplace_back(grpc_lb_addresses_create_channel_arg(addresses));
-  if (result->json_service_config != nullptr) {
+  const grpc_arg* arg = grpc_channel_args_find(
+      base_args, GRPC_ARG_SERVICE_CONFIG_DISABLE_RESOLUTION);
+  grpc_integer_options integer_options = {false, false, true};
+  bool request_service_config =
+      !grpc_channel_arg_get_integer(arg, integer_options);
+  if (request_service_config && result->json_service_config != nullptr) {
     args_to_remove.emplace_back(GRPC_ARG_SERVICE_CONFIG);
     new_args.emplace_back(grpc_channel_arg_string_create(
         const_cast<char*>(GRPC_ARG_SERVICE_CONFIG),
@@ -303,7 +433,29 @@ grpc_channel_args* AddResolverResultToChannelArgs(
 
 void grpc_resolver_factory_register(const char* scheme,
                                     grpc_resolver_factory* factory) {
+  grpc_core::ExecCtx exec_ctx;
   grpc_core::ResolverRegistry::Builder::RegisterResolverFactory(
       grpc_core::UniquePtr<grpc_core::ResolverFactory>(
           grpc_core::New<grpc_core::PluginResolverFactory>(scheme, factory)));
+}
+
+void grpc_resolver_observer_destroy(grpc_resolver_observer* observer) {
+  grpc_core::ExecCtx exec_ctx;
+  auto* resolver = static_cast<grpc_core::PluginResolver*>(observer);
+  grpc_core::PluginResolver::UnrefAsObserver(resolver);
+}
+
+void grpc_resolver_observer_set_result(grpc_resolver_observer* observer,
+                                       const grpc_resolver_result* result) {
+  grpc_core::ExecCtx exec_ctx;
+  auto* plugin_observer = static_cast<grpc_core::PluginResolver*>(observer);
+  plugin_observer->SetNextResult(result, nullptr);
+}
+
+void grpc_resolver_observer_set_error(grpc_resolver_observer* observer,
+                                      const char* error_details) {
+  grpc_core::ExecCtx exec_ctx;
+  auto* plugin_observer = static_cast<grpc_core::PluginResolver*>(observer);
+  plugin_observer->SetNextResult(
+      nullptr, GRPC_ERROR_CREATE_FROM_COPIED_STRING(error_details));
 }
