@@ -781,9 +781,9 @@ filegroups:
   - grpc_client_channel
 - name: grpc_resolver_plugin
   headers:
-  - src/core/ext/filters/client_channel/resolver/custom/custom_resolver.h
+  - src/core/ext/filters/client_channel/resolver/plugin/plugin_resolver.h
   src:
-  - src/core/ext/filters/client_channel/resolver/custom/custom_resolver.cc
+  - src/core/ext/filters/client_channel/resolver/plugin/plugin_resolver.cc
   plugin: grpc_resolver_plugin
   uses:
   - grpc_base
@@ -3347,7 +3347,7 @@ targets:
   build: test
   language: c++
   src:
-  - test/core/client_channel/resolvers/custom_resolver_test.cc
+  - test/core/client_channel/resolvers/plugin_resolver_test.cc
   deps:
   - grpc_test_util
   - grpc

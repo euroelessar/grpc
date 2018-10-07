@@ -997,10 +997,10 @@ grpc_cc_library(
         "grpc_lb_policy_round_robin",
         "grpc_max_age_filter",
         "grpc_message_size_filter",
-        "grpc_resolver_custom",
         "grpc_resolver_dns_ares",
         "grpc_resolver_fake",
         "grpc_resolver_dns_native",
+        "grpc_resolver_plugin",
         "grpc_resolver_sockaddr",
         "grpc_transport_chttp2_client_insecure",
         "grpc_transport_chttp2_server_insecure",
@@ -1462,9 +1462,12 @@ grpc_cc_library(
 )
 
 grpc_cc_library(
-    name = "grpc_resolver_sockaddr",
+    name = "grpc_resolver_plugin",
     srcs = [
-        "src/core/ext/filters/client_channel/resolver/sockaddr/sockaddr_resolver.cc",
+        "src/core/ext/filters/client_channel/resolver/plugin/plugin_resolver.cc",
+    ],
+    hdrs = [
+        "src/core/ext/filters/client_channel/resolver/plugin/plugin_resolver.h",
     ],
     language = "c++",
     deps = [
@@ -1474,12 +1477,9 @@ grpc_cc_library(
 )
 
 grpc_cc_library(
-    name = "grpc_resolver_custom",
+    name = "grpc_resolver_sockaddr",
     srcs = [
-        "src/core/ext/filters/client_channel/resolver/custom/custom_resolver.cc",
-    ],
-    hdrs = [
-        "src/core/ext/filters/client_channel/resolver/custom/custom_resolver.h",
+        "src/core/ext/filters/client_channel/resolver/sockaddr/sockaddr_resolver.cc",
     ],
     language = "c++",
     deps = [

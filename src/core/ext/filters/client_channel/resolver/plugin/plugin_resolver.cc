@@ -29,7 +29,7 @@
 
 #include "src/core/ext/filters/client_channel/lb_policy_factory.h"
 #include "src/core/ext/filters/client_channel/parse_address.h"
-#include "src/core/ext/filters/client_channel/resolver/custom/custom_resolver.h"
+#include "src/core/ext/filters/client_channel/resolver/plugin/plugin_resolver.h"
 #include "src/core/ext/filters/client_channel/resolver_registry.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/gpr/host_port.h"
@@ -430,6 +430,9 @@ grpc_channel_args* AddResolverResultToChannelArgs(
 }
 
 }  // namespace grpc_core
+
+void grpc_resolver_plugin_init() {}
+void grpc_resolver_plugin_shutdown() {}
 
 void grpc_resolver_factory_register(const char* scheme,
                                     grpc_resolver_factory* factory) {
