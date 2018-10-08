@@ -64,7 +64,8 @@ class PluginResolver : public Resolver, public grpc_resolver_observer {
   static void OnCreationLocked(void* user_data, grpc_error* error);
   void SetNextResult(const grpc_resolver_result* result, grpc_error* error);
   static void SetNextResultLocked(void* raw_args, grpc_error* error);
-  static void UnrefAsObserver(PluginResolver* resolver);
+  void RefAsObserver();
+  void UnrefAsObserver();
 
  private:
   virtual ~PluginResolver();
@@ -231,9 +232,13 @@ void PluginResolver::SetNextResultLocked(void* raw_args, grpc_error* error) {
   Delete(args);
 }
 
-void PluginResolver::UnrefAsObserver(PluginResolver* resolver) {
+void PluginResolver::RefAsObserver() {
+  Ref(DEBUG_LOCATION, "grpc_resolver_observer_ref");
+}
+
+void PluginResolver::UnrefAsObserver() {
   // TODO(elessar): Maybe need to call Unref from the combiner's thread?
-  resolver->Unref(DEBUG_LOCATION, "grpc_resolver_observer_destroy");
+  Unref(DEBUG_LOCATION, "grpc_resolver_observer_unref");
 }
 
 void PluginResolver::NextLocked(grpc_channel_args** target_result,
@@ -442,10 +447,17 @@ void grpc_resolver_factory_register(const char* scheme,
           grpc_core::New<grpc_core::PluginResolverFactory>(scheme, factory)));
 }
 
-void grpc_resolver_observer_destroy(grpc_resolver_observer* observer) {
+void grpc_resolver_observer_ref(grpc_resolver_observer* observer) {
+  // Intentionally don't initialize ExecCtx as Ref operations is side-effect
+  // free.
+  auto* resolver = static_cast<grpc_core::PluginResolver*>(observer);
+  resolver->RefAsObserver();
+}
+
+void grpc_resolver_observer_unref(grpc_resolver_observer* observer) {
   grpc_core::ExecCtx exec_ctx;
   auto* resolver = static_cast<grpc_core::PluginResolver*>(observer);
-  grpc_core::PluginResolver::UnrefAsObserver(resolver);
+  resolver->UnrefAsObserver();
 }
 
 void grpc_resolver_observer_set_result(grpc_resolver_observer* observer,

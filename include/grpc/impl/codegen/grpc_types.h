@@ -98,7 +98,7 @@ typedef void (*grpc_resolver_next_cb)(void* user_data,
                                       const char* error_details);
 
 /** The Resolver interfaces.
-    THREAD SAFETY: All methods for the single resolver object will be
+    THREAD SAFETY: All methods for a single resolver object will be
    called from a single thread. */
 typedef struct grpc_resolver {
   /** Request re-resolution of the addresses. */

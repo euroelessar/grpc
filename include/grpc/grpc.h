@@ -214,7 +214,8 @@ GRPCAPI void grpc_resolver_factory_register(const char* scheme,
  * This function should be called on resolver destruction.
  * No \a observer methods must be used after object is destroyed.
  */
-GRPCAPI void grpc_resolver_observer_destroy(grpc_resolver_observer* observer);
+GRPCAPI void grpc_resolver_observer_ref(grpc_resolver_observer* observer);
+GRPCAPI void grpc_resolver_observer_unref(grpc_resolver_observer* observer);
 
 /**
  * Set new list of \a addresses to \a observer.

@@ -37,22 +37,37 @@ namespace grpc {
 namespace testing {
 namespace {
 
+struct ObserverDeleter {
+  void operator()(grpc_resolver_observer* observer) {
+    grpc_resolver_observer_unref(observer);
+  }
+};
+
+typedef std::unique_ptr<grpc_resolver_observer, ObserverDeleter> ObserverPtr;
+
+ObserverPtr MakeObserverPtr(grpc_resolver_observer* observer) {
+  grpc_resolver_observer_ref(observer);
+  return ObserverPtr(observer);
+}
+
 class ResolverPlugin : public grpc_resolver {
  public:
-  ResolverPlugin(grpc_resolver_observer* observer) : observer_(observer) {
+  ResolverPlugin(grpc_resolver_observer* observer)
+      : ResolverPlugin(MakeObserverPtr(observer)) {}
+  ResolverPlugin(ObserverPtr observer) : observer_(std::move(observer)) {
     request_reresolution = RequestReresolutionWrapper;
     destroy = DestroyWrapper;
   }
-  virtual ~ResolverPlugin() { grpc_resolver_observer_destroy(observer_); }
+  virtual ~ResolverPlugin() {}
 
   virtual void RequestReresolution() {}
 
   void SetResult(const grpc_resolver_result* result) {
-    grpc_resolver_observer_set_result(observer_, result);
+    grpc_resolver_observer_set_result(observer_.get(), result);
   }
 
   void SetError(const char* error_details) {
-    grpc_resolver_observer_set_error(observer_, error_details);
+    grpc_resolver_observer_set_error(observer_.get(), error_details);
   }
 
  private:
@@ -63,7 +78,7 @@ class ResolverPlugin : public grpc_resolver {
     grpc_core::Delete(static_cast<ResolverPlugin*>(resolver));
   }
 
-  grpc_resolver_observer* observer_;
+  ObserverPtr observer_;
 };  // namespace
 
 class ResolverPluginFactory : public grpc_resolver_factory {
@@ -96,15 +111,11 @@ class AsyncResolverPluginFactory : public grpc_resolver_factory {
     create_resolver = CreateResolverWrapper;
     destroy = DestroyWrapper;
   }
-  virtual ~AsyncResolverPluginFactory() {
-    if (observer_) grpc_resolver_observer_destroy(observer_);
-  }
+  virtual ~AsyncResolverPluginFactory() {}
 
-  grpc_resolver_observer* TakeObserver() {
+  ObserverPtr TakeObserver() {
     GPR_ASSERT(observer_ != nullptr);
-    auto* observer = observer_;
-    observer_ = nullptr;
-    return observer;
+    return std::move(observer_);
   }
   void SetResolver(ResolverPlugin* resolver, const char* error_details) {
     cb_(user_data_, resolver, error_details);
@@ -120,7 +131,7 @@ class AsyncResolverPluginFactory : public grpc_resolver_factory {
     auto* async_factory = static_cast<AsyncResolverPluginFactory*>(factory);
     async_factory->cb_ = cb;
     async_factory->user_data_ = user_data;
-    async_factory->observer_ = args->observer;
+    async_factory->observer_ = MakeObserverPtr(args->observer);
     return 0;
   }
   static void DestroyWrapper(grpc_resolver_factory* factory) {
@@ -128,12 +139,12 @@ class AsyncResolverPluginFactory : public grpc_resolver_factory {
   }
 
  private:
-  grpc_resolver_observer* observer_ = nullptr;
+  ObserverPtr observer_;
   grpc_resolver_creation_cb cb_ = nullptr;
   void* user_data_;
 };
 
-grpc_core::OrphanablePtr<grpc_core::Resolver> build_custom_resolver(
+grpc_core::OrphanablePtr<grpc_core::Resolver> CreatePluginResolver(
     const char* scheme, grpc_combiner* combiner) {
   grpc_core::ResolverFactory* factory =
       grpc_core::ResolverRegistry::LookupResolverFactory(scheme);
@@ -168,7 +179,7 @@ struct OnResolutionArgs {
   grpc_error* error = nullptr;
 };
 
-void on_resolution_cb(void* arg, grpc_error* error) {
+void OnResolutionCallback(void* arg, grpc_error* error) {
   OnResolutionArgs* res = static_cast<OnResolutionArgs*>(arg);
   res->error = GRPC_ERROR_REF(error);
   gpr_event_set(&res->event, (void*)1);
@@ -179,7 +190,7 @@ void expect_error(const grpc_core::OrphanablePtr<grpc_core::Resolver>& resolver,
   grpc_channel_args* channel_args = nullptr;
   auto on_resolution_arg = grpc_core::MakeUnique<OnResolutionArgs>();
   grpc_closure* on_resolution =
-      GRPC_CLOSURE_CREATE(on_resolution_cb, on_resolution_arg.get(),
+      GRPC_CLOSURE_CREATE(OnResolutionCallback, on_resolution_arg.get(),
                           grpc_combiner_scheduler(combiner));
   resolver->NextLocked(&channel_args, on_resolution);
   grpc_core::ExecCtx::Get()->Flush();
@@ -202,14 +213,14 @@ TEST(PluginResolverTest, ResultPropagation) {
   grpc_combiner* combiner = grpc_combiner_create();
   // Create resolver.
   grpc_core::OrphanablePtr<grpc_core::Resolver> resolver =
-      build_custom_resolver("result_propagation", combiner);
+      CreatePluginResolver("result_propagation", combiner);
   ASSERT_NE(resolver.get(), nullptr);
   ASSERT_NE(plugin_resolver, nullptr);
   // Check happy path.
   auto on_resolution_arg = grpc_core::MakeUnique<OnResolutionArgs>();
   grpc_channel_args* channel_args = nullptr;
   grpc_closure* on_resolution =
-      GRPC_CLOSURE_CREATE(on_resolution_cb, on_resolution_arg.get(),
+      GRPC_CLOSURE_CREATE(OnResolutionCallback, on_resolution_arg.get(),
                           grpc_combiner_scheduler(combiner));
   resolver->NextLocked(&channel_args, on_resolution);
   grpc_core::InlinedVector<grpc_address, 1> addresses;
@@ -247,8 +258,9 @@ TEST(PluginResolverTest, ResultPropagation) {
   // Check failure path.
   channel_args = nullptr;
   on_resolution_arg = grpc_core::MakeUnique<OnResolutionArgs>();
-  on_resolution = GRPC_CLOSURE_CREATE(on_resolution_cb, on_resolution_arg.get(),
-                                      grpc_combiner_scheduler(combiner));
+  on_resolution =
+      GRPC_CLOSURE_CREATE(OnResolutionCallback, on_resolution_arg.get(),
+                          grpc_combiner_scheduler(combiner));
   resolver->NextLocked(&channel_args, on_resolution);
   plugin_resolver->SetError("custom error");
   grpc_core::ExecCtx::Get()->Flush();
@@ -296,7 +308,7 @@ TEST(PluginResolverTest, RequestReresolution) {
   grpc_combiner* combiner = grpc_combiner_create();
   // Create resolver.
   grpc_core::OrphanablePtr<grpc_core::Resolver> resolver =
-      build_custom_resolver("request_reresolution_counter", combiner);
+      CreatePluginResolver("request_reresolution_counter", combiner);
   ASSERT_NE(resolver.get(), nullptr);
   ASSERT_EQ(factory->GetCounter(), 0u);
   resolver->RequestReresolutionLocked();
@@ -359,7 +371,6 @@ class FailToInstantiateResolverFactory : public grpc_resolver_factory {
                                    void* user_data, grpc_resolver** resolver,
                                    const char** error_details) {
     *error_details = gpr_strdup("failed to resolve");
-    grpc_resolver_observer_destroy(args->observer);
     return 1;
   }
   static void DestroyWrapper(grpc_resolver_factory* factory) {
@@ -374,7 +385,7 @@ TEST(PluginResolverTest, FailToInstantiateResolver) {
   grpc_combiner* combiner = grpc_combiner_create();
   // Create resolver.
   grpc_core::OrphanablePtr<grpc_core::Resolver> resolver =
-      build_custom_resolver("failure-to-instantiate", combiner);
+      CreatePluginResolver("failure-to-instantiate", combiner);
   ASSERT_NE(resolver.get(), nullptr);
   for (size_t i = 0; i < 3; i++) {
     expect_error(resolver, "failed to resolve", combiner);
@@ -391,7 +402,7 @@ TEST(PluginResolverTest, FailToInstantiateResolverAsync) {
   grpc_combiner* combiner = grpc_combiner_create();
   // Request resolver.
   grpc_core::OrphanablePtr<grpc_core::Resolver> resolver =
-      build_custom_resolver("failure-to-instantiate-async", combiner);
+      CreatePluginResolver("failure-to-instantiate-async", combiner);
   ASSERT_NE(resolver.get(), nullptr);
   // Fail its creation.
   factory->SetResolver(nullptr, "bad test");
@@ -410,7 +421,7 @@ TEST(PluginResolverTest, ShutdownBeforeCreationIsDone) {
   grpc_combiner* combiner = grpc_combiner_create();
   // Request resolver.
   grpc_core::OrphanablePtr<grpc_core::Resolver> resolver =
-      build_custom_resolver("shutdown-before-creation-is-done", combiner);
+      CreatePluginResolver("shutdown-before-creation-is-done", combiner);
   ASSERT_NE(resolver.get(), nullptr);
   resolver.reset();
   factory->SetResolver(grpc_core::New<ResolverPlugin>(factory->TakeObserver()),
