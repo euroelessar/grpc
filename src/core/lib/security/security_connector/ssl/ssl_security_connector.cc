@@ -140,6 +140,12 @@ static bool try_replace_channel_handshaker_factory(
             "config.");
     return false;
   }
+  if (config.version == sc->config.version) {
+    // The same config, skip.
+    gpr_log(GPR_DEBUG, "Using the shame channel certificate config (%p, %d).",
+            config.config, config.version);
+    return false;
+  }
   gpr_log(GPR_DEBUG, "Using new channel certificate config (%p, %d).",
           config.config, config.version);
 
